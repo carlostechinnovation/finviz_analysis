@@ -1,151 +1,141 @@
-// ======== CONFIGURACIÓN ========
-const CORS_PROXY = "https://corsproxy.io/?";
-const CSV_FILE = "urls_screeners_finviz.csv"; // CSV en /docs/
+// ESTABLE_2122+
+// Script para comparar Empresa vs Screener en Finviz con resultados OK/NOK/NA y colores
 
-// ======== UTILIDADES ========
+const screenerSelect = document.getElementById('screener');
+const compareBtn = document.getElementById('compareBtn');
+const resultDiv = document.getElementById('result');
+const logDiv = document.getElementById('log');
+
+// Función para log en pantalla
 function log(msg) {
-    const logDiv = document.getElementById("log");
-    const now = new Date().toLocaleTimeString();
-    logDiv.innerHTML += `[${now}] ${msg}<br>`;
+    console.log(msg);
+    logDiv.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
     logDiv.scrollTop = logDiv.scrollHeight;
 }
 
-async function fetchHTML(url) {
-    const proxiedUrl = `${CORS_PROXY}${encodeURIComponent(url)}`;
-    log(`Intentando obtener: ${url}`);
-    log(`Usando proxy: ${proxiedUrl}`);
-    const res = await fetch(proxiedUrl);
-    if (!res.ok) throw new Error(`Error al obtener ${url}: ${res.status}`);
-    log("✅ Descargado correctamente");
-    return await res.text();
-}
-
-// ======== CARGA DE SCREENERS DESDE CSV ========
+// Cargar CSV de screeners
 async function loadScreeners() {
-    const res = await fetch(CSV_FILE);
-    const text = await res.text();
-    const lines = text.trim().split("\n").slice(1); // quitar cabecera
-    const select = document.getElementById("screenerSelect");
-    select.innerHTML = "";
-    select.add(new Option("CUSTOM", ""));
-    for (const line of lines) {
-        const [key, url] = line.split("|");
-        select.add(new Option(key, url));
+    try {
+        const resp = await fetch('urls_screeners_finviz.csv');
+        const text = await resp.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        screenerSelect.innerHTML = '';
+        lines.slice(1).forEach(line => {
+            const [key, url] = line.split('|');
+            const opt = document.createElement('option');
+            opt.value = url.trim();
+            opt.textContent = key.trim();
+            screenerSelect.appendChild(opt);
+        });
+    } catch (err) {
+        log('Error cargando screeners: ' + err);
+        screenerSelect.innerHTML = '<option value="">Error cargando</option>';
     }
 }
 
-// Al seleccionar un screener, actualizar input
-document.getElementById("screenerSelect").addEventListener("change", (e) => {
-    const url = e.target.value;
-    document.getElementById("screenerUrl").value = url;
-});
+// Normalizar valores numéricos
+function cleanValue(v) {
+    if (!v) return NaN;
+    return parseFloat(v.replace(/[%BKM,]/g, '').trim());
+}
 
-// ======== PARSERS ========
-function parseCompanyData(html) {
-    log("Parseando datos de la empresa...");
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-    const tds = Array.from(doc.querySelectorAll("table.snapshot-table2 td"));
-    const data = {};
-    for (let i = 0; i < tds.length; i += 2) {
-        const key = tds[i]?.innerText.trim();
-        const val = tds[i + 1]?.innerText.trim();
-        if (key && val) data[key] = val;
+// Comparar valor con condición
+function compareValue(operator, limit, actual) {
+    if (!operator || !limit || actual === 'N/A') return 'NA';
+    const val = cleanValue(actual);
+    const lim = cleanValue(limit);
+    switch (operator.trim()) {
+        case '≥':
+        case '>=': return val >= lim ? 'OK' : 'NOK';
+        case '≤':
+        case '<=': return val <= lim ? 'OK' : 'NOK';
+        case '=': return val === lim ? 'OK' : 'NOK';
+        case '>': return val > lim ? 'OK' : 'NOK';
+        case '<': return val < lim ? 'OK' : 'NOK';
+        default: return 'NA';
     }
-    log(`Datos empresa extraídos: ${Object.keys(data).join(", ")}`);
+}
+
+// Extraer filtros del URL del screener
+function parseScreenerFilters(url) {
+    const params = new URL(url).searchParams.get('f');
+    if (!params) return [];
+    return params.split(',').map(f => {
+        // Mapear a nombre legible y operador/valor
+        const mapping = {
+            'fa_pe_u30': ['P/E', '≤', '30'],
+            'fa_curratio_o1': ['Current Ratio', '≥', '1'],
+            'fa_debteq_u1': ['Debt/Eq', '≤', '1'],
+            'fa_ev_sales_u6': ['EV/Sales', '≤', '6'],
+            'fa_grossmargin_o10': ['Gross Margin', '≥', '10'],
+            'fa_ltdebteq_u1': ['ltDebt/Eq', '≤', '1'],
+            'fa_opermargin_o5': ['OP/Er. Margin', '≥', '5'],
+            'fa_ps_u2': ['P/S', '≥', '2'],
+            'sh_float_o1': ['float', '≥', '1'],
+            'sh_instown_o30': ['Inst Own', '≥', '30'],
+            'sh_relvol_o0.5': ['Rel Volume', '≥', '0.5'],
+            'sh_short_u10': ['Short Float', '≤', '10'],
+            'ta_averagetruerange_o1': ['ATR (14)', '≥', '1'],
+            'ta_highlow52w_a5h': ['52W High', '≥', '5h'],
+            'ta_perf_3yup': ['Perf 3Y', '≥', '0'],
+            'ta_perf2_26wup': ['Perf 26W', '≥', '0'],
+            'ta_rsi_nos40': ['RSI (14)', '≥', '40'],
+            'ta_sma20_pa': ['SMA20', '≥', '0']
+        };
+        return mapping[f] || [f, '', ''];
+    });
+}
+
+// Extraer valores de la página de la empresa (parse HTML)
+function parseCompanyData(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const data = {};
+    doc.querySelectorAll('td.fullview-title+td')?.forEach(td => {
+        const key = td.previousElementSibling.textContent.trim();
+        const val = td.textContent.trim();
+        data[key] = val;
+    });
     return data;
 }
 
-function parseScreenerFilters(url) {
-    const filters = {};
-    const match = url.match(/[?&]f=([^&]+)/);
-    if (!match) return filters;
-    const fParam = decodeURIComponent(match[1]);
-    const items = fParam.split(",");
-    for (const item of items) {
-        const [prefix, key, opVal] = item.split("_");
-        if (!key || !opVal) continue;
-        const value = opVal.replace(/[a-z]+/, "");
-        let fieldName = key
-            .replace("curratio", "Current Ratio")
-            .replace("debteq", "Debt/Eq")
-            .replace("evsales", "EV/Sales")
-            .replace("grossmargin", "Gross Margin")
-            .replace("ltdebteq", "LT Debt/Eq")
-            .replace("opermargin", "Oper. Margin")
-            .replace("pe", "P/E")
-            .replace("ps", "P/S")
-            .replace("sh_float", "Shs Float")
-            .replace("instown", "Inst Own")
-            .replace("relvol", "Rel Volume")
-            .replace("short", "Short Float")
-            .replace("averagetruerange", "ATR (14)")
-            .replace("highlow52w", "52W High")
-            .replace("perf_3y", "Perf 3Y")
-            .replace("perf2_1wup", "Perf Week")
-            .replace("rsi", "RSI (14)")
-            .replace("sma20", "SMA20");
-        let condition = opVal.startsWith("u") ? "≤" : "≥";
-        filters[fieldName] = `${condition} ${value}`;
-    }
-    log(`Filtros del screener: ${Object.keys(filters).join(", ")}`);
-    return filters;
-}
-
-// ======== COMPARACIÓN ========
-function compareData(company, filters) {
-    const rows = [];
-    for (const [field, condition] of Object.entries(filters)) {
-        const companyValue = company[field] || "N/A";
-        const ok = companyValue === "N/A" ? "N/A" : "OK";
-        rows.push({ field, condition, companyValue, result: ok });
-    }
-    return rows;
-}
-
-// ======== EJECUCIÓN ========
+// Función principal
 async function runComparison() {
+    const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+    const screenerURL = screenerSelect.value.trim();
+    if (!ticker || !screenerURL) { alert('Rellenar ticker y screener'); return; }
+
+    log('Iniciando comparación...');
+    const proxy = url => `https://corsproxy.io/?${encodeURIComponent(url)}`;
+
     try {
-        const ticker = document.getElementById("ticker").value.trim().toUpperCase();
-        const screenerUrl = document.getElementById("screenerUrl").value.trim();
-        const tbody = document.querySelector("#resultsTable tbody");
-        tbody.innerHTML = "";
+        log('Obteniendo empresa: ' + ticker);
+        const compResp = await fetch(proxy(`https://finviz.com/quote.ashx?t=${ticker}`));
+        const compHTML = await compResp.text();
+        const companyData = parseCompanyData(compHTML);
+        log('Datos empresa extraídos: ' + Object.keys(companyData).join(', '));
 
-        if (!ticker || !screenerUrl) {
-            alert("Debes introducir el ticker y la URL del screener.");
-            return;
-        }
+        log('Obteniendo screener');
+        const scrResp = await fetch(proxy(screenerURL));
+        const scrHTML = await scrResp.text();
+        const screenerFilters = parseScreenerFilters(screenerURL);
+        log('Filtros del screener: ' + screenerFilters.map(f => f[0]).join(', '));
 
-        log("Iniciando comparación...");
-        const companyUrl = `https://finviz.com/quote.ashx?t=${ticker}`;
-
-        const [companyHTML, screenerHTML] = await Promise.all([
-            fetchHTML(companyUrl),
-            fetchHTML(screenerUrl)
-        ]);
-
-        const companyData = parseCompanyData(companyHTML);
-        const screenerFilters = parseScreenerFilters(screenerUrl);
-
-        const results = compareData(companyData, screenerFilters);
-
-        results.forEach(r => {
-            const row = document.createElement("tr");
-            row.innerHTML = `
-        <td>${r.field}</td>
-        <td>${r.condition}</td>
-        <td>${r.companyValue}</td>
-        <td class="${r.result === 'OK' ? 'ok' : 'nok'}">${r.result}</td>
-      `;
-            tbody.appendChild(row);
+        // Construir tabla
+        let html = '<table><tr><th>Filtro</th><th>Condición Screener</th><th>Valor Empresa</th><th>OK/NOK</th></tr>';
+        screenerFilters.forEach(([name, op, limit]) => {
+            const val = companyData[name] || 'N/A';
+            const res = compareValue(op, limit, val);
+            html += `<tr><td>${name}</td><td>${op} ${limit}</td><td>${val}</td><td class="${res}">${res}</td></tr>`;
         });
-
-        log("✅ Comparación finalizada");
+        html += '</table>';
+        resultDiv.innerHTML = html;
+        log('✅ Comparación finalizada');
     } catch (err) {
-        log("❌ ERROR: " + err.message);
+        log('Error: ' + err);
     }
 }
 
-// ======== EVENTOS ========
-document.getElementById("compareBtn").addEventListener("click", runComparison);
-loadScreeners();
+// Event listeners
+compareBtn.addEventListener('click', runComparison);
+window.addEventListener('load', loadScreeners);
