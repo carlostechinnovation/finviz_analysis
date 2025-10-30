@@ -1,0 +1,86 @@
+FILTRO|DESCRIPCION
+Index|Major index membership
+RUT|
+P/E|Price-to-Earnings (ttm)
+EPS (ttm)|Diluted EPS (ttm)
+Insider Own|Insider ownership
+Shs Outstand|Shares outstanding
+Perf Week|Performance (Week, Excl. Dividends)
+Market Cap|Market capitalization
+Forward P/E|Forward Price-to-Earnings (next fiscal year)
+EPS next Y|EPS estimate for next year
+Insider Trans|Insider transactions (6-Month change in Insider Ownership)
+Shs Float|Shares float
+Perf Month|Performance (Month, Excl. Dividends)
+Enterprise Value|Enterprise Value
+PEG|Price-to-Earnings-to-Growth
+EPS next Q|EPS estimate for next quarter
+Inst Own|Institutional ownership
+Short Float|Short interest share
+Perf Quarter|Performance (Quarter, Excl. Dividends)
+Income|Income (ttm)
+P/S|Price-to-Sales (ttm)
+EPS this Y|EPS growth this year
+Inst Trans|Institutional transactions (3-Month change in Institutional Ownership)
+Short Ratio|Short interest ratio
+Perf Half Y|Performance (Half Year, Excl. Dividends)
+Sales|Revenue (ttm)
+P/B|Price-to-Book (mrq)
+EPS next Y|EPS growth next year
+ROA|Return on Assets (ttm)
+Short Interest|Short interest
+Perf YTD|Performance (Year To Date, Excl. Dividends)
+Book/sh|Book value per share (mrq)
+P/C|Price to cash per share (mrq)
+EPS next 5Y|Long term annual growth estimate (5 years)
+ROE|Return on Equity (ttm)
+52W High|Distance from 52-Week High
+Perf Year|Performance (Year, Excl. Dividends)
+Cash/sh|Cash per share (mrq)
+P/FCF|Price to Free Cash Flow (ttm)
+EPS past 3/5Y|Annual EPS growth past 3 and 5 years
+ROIC|Return on Invested Capital (ttm)
+52W Low|Distance from 52-Week Low
+Perf 3Y|Performance (3 Years, Excl. Dividends)
+Dividend Est.|Analysts' Dividend Estimate (Fiscal Year)
+EV/EBITDA|Enterprise Value to EBITDA
+Sales past 3/5Y|Annual sales growth past 3 and 5 years
+Gross Margin|Gross Margin (ttm)
+Volatility|Volatility (Week, Month)
+Perf 5Y|Performance (5 Years, Excl. Dividends)
+Dividend TTM|Trailing 12 Months Dividend
+EV/Sales|Enterprise Value to Revenues
+EPS Y/Y TTM|EPS growth TTM
+Oper. Margin|Operating Margin (ttm)
+ATR (14)|Average True Range (14)
+Perf 10Y|Performance (10 Years, Excl. Dividends)
+Dividend Ex-Date|Ex-Dividend Date
+Quick Ratio|Quick Ratio (mrq)
+Sales Y/Y TTM|Sales growth TTM
+Profit Margin|Net Profit Margin (ttm)
+RSI (14)|Relative Strength Index
+Recom|Analysts' mean recommendation (1=Buy 5=Sell)
+Dividend Gr. 3/5Y|Dividend growth over 3 and 5 years
+Current Ratio|Current Ratio (mrq)
+EPS Q/Q|Quarterly earnings growth (YoY)
+SMA20|Distance from 20-Day Simple Moving Average
+Beta|Beta
+Target Price|Analysts' mean target price
+Payout|Dividend Payout Ratio (ttm)
+Debt/Eq|Total Debt to Equity (mrq)
+Sales Q/Q|Quarterly revenue growth (YoY)
+SMA50|Distance from 50-Day Simple Moving Average
+Rel Volume|Relative volume
+Prev Close|Previous close
+Employees|Full time employees
+LT Debt/Eq|Long Term Debt to Equity (mrq)
+Earnings|Earnings date (BMO/AMC)
+SMA200|Distance from 200-Day Simple Moving Average
+Avg Volume|Average volume (3 month)
+Price|Current stock price
+IPO|IPO Date
+Option/Short|Stock has options trading on a market exchange / Stock is avaiable to sell short
+EPS/Sales Surpr.|Last quarter EPS and Revenue surprise
+Trades|Trades
+Volume|Volume
+Change|Performance (today)
