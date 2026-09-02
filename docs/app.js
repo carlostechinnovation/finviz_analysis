@@ -1,15 +1,16 @@
 /* =========================================================================
    Comparador empresa vs screener (Finviz)
    100% cliente: no hay backend. Solo HTML + JS estatico en GitHub Pages.
+
+   NOTA DE CODIFICACION: este fichero se mantiene en ASCII puro a proposito.
+   Los acentos y simbolos van como escapes \uXXXX dentro de las cadenas, de
+   forma que ningun editor pueda corromperlo al guardarlo en otra codificacion.
    ========================================================================= */
 
 const tickerInput = document.getElementById("ticker");
 const screenerSelect = document.getElementById("screenerSelect");
 const customURLInput = document.getElementById("customURL");
 const compareBtn = document.getElementById("compareBtn");
-const pasteBtn = document.getElementById("pasteBtn");
-const pasteArea = document.getElementById("pasteArea");
-const pasteBox = document.getElementById("pasteBox");
 const resultsTable = document.getElementById("resultsTable").querySelector("tbody");
 const resumenDiv = document.getElementById("resumen");
 const log = document.getElementById("log");
@@ -30,7 +31,7 @@ const LS_PROXY_OK = "finviz_proxy_ok";
      - finviz : etiqueta EXACTA tal y como aparece en la ficha de la empresa
      - op     : operador de comparacion
      - valor  : umbral numerico
-     - texto  : lo que se muestra en la columna "Condición Screener"
+     - texto  : lo que se muestra en la columna "Condicion Screener"
      - escala : true si el valor puede venir con sufijo K/M/B/T (Market Cap, Float)
    ------------------------------------------------------------------------- */
 const FILTROS = {
@@ -61,7 +62,7 @@ const FILTROS = {
     // OJO: revisar este mapeo con el test de cumplimiento del README.
     // a5h se interpreta aqui como "a 5% o mas del maximo de 52 semanas",
     // y el dato "52W High" de Finviz es negativo cuando el precio esta por debajo.
-    "ta_highlow52w_a5h":      { finviz: "52W High",      op: "<=", valor: -5,    texto: "≤ -5% (a 5% o más del máximo)" },
+    "ta_highlow52w_a5h":      { finviz: "52W High",      op: "<=", valor: -5,    texto: "<= -5% (a 5% o m\u00e1s del m\u00e1ximo)" },
     "ta_perf2_26wup":         { finviz: "Perf Half Y",   op: ">",  valor: 0,     texto: "> 0%" },
     "ta_perf_3yup":           { finviz: "Perf 3Y",       op: ">",  valor: 0,     texto: "> 0%" }
 };
@@ -82,35 +83,25 @@ const ALIAS = {
     "Oper. Margin": ["Operating Margin", "Opern Margin", "Operating Margin (ttm)"],
     "Gross Margin": ["Gross Margin (ttm)"],
     "Shs Float": ["Float", "Shs Float / Outstanding"],
-    "ATR (14)": ["ATR", "ATR (14) "],
-    "RSI (14)": ["RSI", "RSI (14) "],
+    "ATR (14)": ["ATR"],
+    "RSI (14)": ["RSI"],
     "Short Float": ["Short Float / Ratio", "Short Interest Share", "Short Float / Short Ratio"],
     "Perf Half Y": ["Perf 26W", "Perf Half", "Perf Half Year"],
-    "Perf 3Y": ["Perf 3Y ", "Perf 3 Y", "Perf 3Year"],
+    "Perf 3Y": ["Perf 3 Y", "Perf 3Year"],
     "Inst Own": ["Institutional Ownership"],
     "Rel Volume": ["Rel Vol", "Relative Volume"],
-    "52W High": ["52W High ", "52-Week High"],
+    "52W High": ["52-Week High"],
     "EV/Sales": ["EV / Sales"],
     "Forward P/E": ["Fwd P/E"],
     "LT Debt/Eq": ["LT Debt/Equity"],
     "Debt/Eq": ["Debt/Equity", "Total Debt/Equity"]
 };
 
-// Conjunto de etiquetas que sabemos leer -> sirve para validar una descarga
-const ETIQUETAS_CONOCIDAS = new Set();
-(function construyeConocidas() {
-    for (const codigo of Object.keys(FILTROS)) {
-        const etiqueta = FILTROS[codigo].finviz;
-        ETIQUETAS_CONOCIDAS.add(normaliza(etiqueta));
-        for (const alt of (ALIAS[etiqueta] || [])) ETIQUETAS_CONOCIDAS.add(normaliza(alt));
-    }
-})();
-
 /* -------------------------------------------------------------------------
    2) UTILIDADES
    ------------------------------------------------------------------------- */
 function logMsg(msg) {
-    log.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+    log.textContent += "[" + new Date().toLocaleTimeString() + "] " + msg + "\n";
     log.scrollTop = log.scrollHeight;
 }
 
@@ -121,6 +112,16 @@ function normaliza(s) {
 function limpia(s) {
     return String(s).replace(/\s+/g, " ").trim();
 }
+
+// Conjunto de etiquetas que sabemos leer -> sirve para validar una descarga
+const ETIQUETAS_CONOCIDAS = new Set();
+(function construyeConocidas() {
+    for (const codigo of Object.keys(FILTROS)) {
+        const etiqueta = FILTROS[codigo].finviz;
+        ETIQUETAS_CONOCIDAS.add(normaliza(etiqueta));
+        for (const alt of (ALIAS[etiqueta] || [])) ETIQUETAS_CONOCIDAS.add(normaliza(alt));
+    }
+})();
 
 // Convierte "1,234.5", "12.34%", "+3.2%", "3.45T", "-" ... a numero
 function aNumero(txt, escala) {
@@ -169,8 +170,6 @@ function buscaValor(datos, etiqueta) {
 
 /* -------------------------------------------------------------------------
    3) EXTRACCION DE DATOS
-   Dos parsers: uno para HTML (cualquier layout de Finviz) y otro para el
-   texto/markdown que devuelven algunos proxies que renderizan la pagina.
    ------------------------------------------------------------------------- */
 
 // Recorre TODAS las tablas del documento buscando pares clave/valor.
@@ -228,19 +227,19 @@ function cuentaConocidos(datos) {
 
 /* -------------------------------------------------------------------------
    4) DESCARGA VIA PROXY CORS
-   GitHub Pages no puede llamar a finviz.com directamente (CORS) y no queremos
+   GitHub Pages no puede llamar a finviz.com directamente (CORS) y no hay
    backend propio, asi que dependemos de proxies publicos. Se lanzan TODOS en
    paralelo con timeout individual y gana el primero que devuelva datos utiles.
    ------------------------------------------------------------------------- */
 const PROXIES = [
-    { nombre: "allorigins-raw",  tipo: "html", build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
-    { nombre: "allorigins-json", tipo: "json", build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}` },
-    { nombre: "codetabs",        tipo: "html", build: u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
-    { nombre: "corsproxy",       tipo: "html", build: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
-    { nombre: "isomorphic-git",  tipo: "html", build: u => `https://cors.isomorphic-git.org/${u}` },
-    { nombre: "thingproxy",      tipo: "html", build: u => `https://thingproxy.freeboard.io/fetch/${u}` },
+    { nombre: "allorigins-raw",  tipo: "html",  build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u) },
+    { nombre: "allorigins-json", tipo: "json",  build: u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u) },
+    { nombre: "codetabs",        tipo: "html",  build: u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u) },
+    { nombre: "corsproxy",       tipo: "html",  build: u => "https://corsproxy.io/?url=" + encodeURIComponent(u) },
+    { nombre: "isomorphic-git",  tipo: "html",  build: u => "https://cors.isomorphic-git.org/" + u },
+    { nombre: "thingproxy",      tipo: "html",  build: u => "https://thingproxy.freeboard.io/fetch/" + u },
     // jina renderiza la pagina y devuelve markdown: esquiva bloqueos de scraping
-    { nombre: "jina-reader",     tipo: "texto", build: u => `https://r.jina.ai/${u}` }
+    { nombre: "jina-reader",     tipo: "texto", build: u => "https://r.jina.ai/" + u }
 ];
 
 async function fetchConTimeout(url, ms) {
@@ -256,10 +255,10 @@ async function fetchConTimeout(url, ms) {
 async function intentaProxy(proxy, objetivo) {
     const url = proxy.build(objetivo);
     const resp = await fetchConTimeout(url, TIMEOUT_MS);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
 
     const cuerpo = await resp.text();
-    if (!cuerpo || cuerpo.length < 200) throw new Error("respuesta vacía");
+    if (!cuerpo || cuerpo.length < 200) throw new Error("respuesta vacia");
 
     let datos;
     if (proxy.tipo === "json") {
@@ -275,45 +274,50 @@ async function intentaProxy(proxy, objetivo) {
 
     const validos = cuentaConocidos(datos);
     if (validos < MIN_CAMPOS_VALIDOS) {
-        throw new Error(`solo ${validos} campos reconocidos (${cuerpo.length} bytes)`);
+        throw new Error("solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
     }
-    return { datos, validos, proxy: proxy.nombre };
+    return { datos: datos, validos: validos, proxy: proxy.nombre };
 }
 
 // Lanza todas las combinaciones proxy x URL a la vez y devuelve la primera util.
 function descargaDatos(ticker) {
     const objetivos = [
-        `https://finviz.com/quote.ashx?t=${ticker}&p=d`,
-        `https://elite.finviz.com/quote.ashx?t=${ticker}&p=d`
+        "https://finviz.com/quote.ashx?t=" + ticker + "&p=d",
+        "https://elite.finviz.com/quote.ashx?t=" + ticker + "&p=d"
     ];
 
-    const preferido = localStorage.getItem(LS_PROXY_OK);
+    let preferido = null;
+    try { preferido = localStorage.getItem(LS_PROXY_OK); } catch (e) { /* modo privado */ }
+
     const proxiesOrdenados = PROXIES.slice().sort((a, b) =>
         (b.nombre === preferido) - (a.nombre === preferido));
 
     const candidatos = [];
     for (const objetivo of objetivos) {
-        for (const proxy of proxiesOrdenados) candidatos.push({ proxy, objetivo });
+        for (const proxy of proxiesOrdenados) candidatos.push({ proxy: proxy, objetivo: objetivo });
     }
 
-    logMsg(`Lanzando ${candidatos.length} intentos en paralelo (timeout ${TIMEOUT_MS / 1000}s cada uno)...`);
+    logMsg("Lanzando " + candidatos.length + " intentos en paralelo (timeout " +
+           (TIMEOUT_MS / 1000) + "s cada uno)...");
 
     return new Promise(resolve => {
         let pendientes = candidatos.length;
         let resuelto = false;
 
-        candidatos.forEach(({ proxy, objetivo }) => {
-            intentaProxy(proxy, objetivo)
+        candidatos.forEach(c => {
+            intentaProxy(c.proxy, c.objetivo)
                 .then(r => {
                     if (resuelto) return;
                     resuelto = true;
-                    logMsg(`  ✓ ${proxy.nombre}: ${r.validos} campos reconocidos`);
-                    try { localStorage.setItem(LS_PROXY_OK, proxy.nombre); } catch (e) { /* modo privado */ }
+                    logMsg("  [OK] " + c.proxy.nombre + ": " + r.validos + " campos reconocidos");
+                    try { localStorage.setItem(LS_PROXY_OK, c.proxy.nombre); } catch (e) { /* modo privado */ }
                     resolve(r);
                 })
                 .catch(e => {
-                    const motivo = e.name === "AbortError" ? `timeout ${TIMEOUT_MS / 1000}s` : e.message;
-                    logMsg(`  ✗ ${proxy.nombre}: ${motivo}`);
+                    const motivo = e.name === "AbortError"
+                        ? "timeout " + (TIMEOUT_MS / 1000) + "s"
+                        : e.message;
+                    logMsg("  [FALLO] " + c.proxy.nombre + ": " + motivo);
                 })
                 .finally(() => {
                     pendientes--;
@@ -358,7 +362,7 @@ async function loadScreeners() {
 
         if (porDefecto) screenerSelect.value = porDefecto.value;
     } catch (e) {
-        logMsg(`No se pudo cargar urls_screeners_finviz.csv: ${e.message}`);
+        logMsg("No se pudo cargar urls_screeners_finviz.csv: " + e.message);
     }
 
     customURLInput.style.display = screenerSelect.value === VALOR_CUSTOM ? "inline-block" : "none";
@@ -381,7 +385,7 @@ async function loadDescriptions() {
             map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
         }
     } catch (e) {
-        logMsg(`No se pudo cargar descripcion_filtros.csv: ${e.message}`);
+        logMsg("No se pudo cargar descripcion_filtros.csv: " + e.message);
     }
     descripcionesCache = map;
     return map;
@@ -402,6 +406,12 @@ function buscaDescripcion(descripciones, etiqueta) {
 /* -------------------------------------------------------------------------
    6) COMPARACION
    ------------------------------------------------------------------------- */
+function textoPlano(s) {
+    const d = document.createElement("div");
+    d.textContent = String(s === undefined || s === null ? "" : s);
+    return d.innerHTML;
+}
+
 async function pinta(ticker, filtros, datos) {
     const descripciones = await loadDescriptions();
 
@@ -434,20 +444,19 @@ async function pinta(ticker, filtros, datos) {
         const etiquetaTexto = estado === "ok" ? "CUMPLE" : (estado === "nok" ? "INCUMPLE" : "N/A");
 
         const tr = document.createElement("tr");
-        tr.innerHTML = `
-      <td>${etiqueta}</td>
-      <td>${condicion}</td>
-      <td>${mostrado}</td>
-      <td class="${estado}">${etiquetaTexto}</td>
-      <td>${buscaDescripcion(descripciones, etiqueta)}</td>
-    `;
+        tr.innerHTML =
+            "<td>" + textoPlano(etiqueta) + "</td>" +
+            "<td>" + textoPlano(condicion) + "</td>" +
+            "<td>" + textoPlano(mostrado) + "</td>" +
+            '<td class="' + estado + '">' + etiquetaTexto + "</td>" +
+            "<td>" + textoPlano(buscaDescripcion(descripciones, etiqueta)) + "</td>";
         resultsTable.appendChild(tr);
     }
 
     resumenDiv.textContent =
-        `${ticker}: ${ok} CUMPLE · ${nok} INCUMPLE · ${na} N/A` +
-        (nok === 0 && na === 0 ? " → la empresa pasa todos los criterios del screener." : "");
-    logMsg(`✅ Comparación finalizada: ${ok} OK / ${nok} NOK / ${na} N/A`);
+        ticker + ": " + ok + " CUMPLE - " + nok + " INCUMPLE - " + na + " N/A" +
+        (nok === 0 && na === 0 ? " -> la empresa pasa todos los criterios del screener." : "");
+    logMsg("Comparacion finalizada: " + ok + " OK / " + nok + " NOK / " + na + " N/A");
 }
 
 function leeFiltrosScreener() {
@@ -460,12 +469,11 @@ function leeFiltrosScreener() {
     return f ? f.split(",").map(x => x.trim()).filter(Boolean) : [];
 }
 
-async function runComparison(usarPegado) {
+async function runComparison() {
     log.textContent = "";
     resultsTable.innerHTML = "";
     resumenDiv.textContent = "";
     compareBtn.disabled = true;
-    pasteBtn.disabled = true;
 
     try {
         const ticker = tickerInput.value.trim().toUpperCase();
@@ -476,56 +484,37 @@ async function runComparison(usarPegado) {
             return;
         }
         if (!filtros.length) {
-            resumenDiv.textContent = "La URL del screener no contiene filtros (parámetro 'f').";
-            logMsg("⚠ La URL del screener no tiene parámetro 'f'.");
+            resumenDiv.textContent = "La URL del screener no contiene filtros (par\u00e1metro 'f').";
+            logMsg("AVISO: la URL del screener no tiene parametro 'f'.");
             return;
         }
 
-        logMsg(`Comparando ${ticker} contra: ${screenerSelect.options[screenerSelect.selectedIndex].textContent}`);
-        logMsg(`Filtros del screener (${filtros.length}): ${filtros.join(", ")}`);
+        logMsg("Comparando " + ticker + " contra: " +
+               screenerSelect.options[screenerSelect.selectedIndex].textContent);
+        logMsg("Filtros del screener (" + filtros.length + "): " + filtros.join(", "));
 
-        let datos = null;
-
-        if (usarPegado) {
-            const pegado = pasteBox.value.trim();
-            if (!pegado) {
-                alert("Pega primero el código fuente de la página de Finviz.");
-                return;
-            }
-            datos = extraeDatosHTML(pegado);
-            if (cuentaConocidos(datos) < MIN_CAMPOS_VALIDOS) datos = extraeDatosTexto(pegado);
-            logMsg(`Usando HTML pegado: ${cuentaConocidos(datos)} campos reconocidos.`);
-            if (cuentaConocidos(datos) < MIN_CAMPOS_VALIDOS) {
-                resumenDiv.textContent =
-                    "El texto pegado no contiene la tabla de datos de Finviz. " +
-                    "Asegúrate de copiar el código fuente completo (Ctrl+U → Ctrl+A → Ctrl+C).";
-                return;
-            }
-        } else {
-            const r = await descargaDatos(ticker);
-            if (!r) {
-                resumenDiv.textContent =
-                    `No se han podido descargar los datos de ${ticker}: ningún proxy CORS respondió ` +
-                    `con la ficha de Finviz. Usa la opción "Pegar HTML manualmente" de abajo.`;
-                logMsg("✗ Todos los proxies han fallado. Abriendo el modo manual.");
-                pasteArea.open = true;
-                return;
-            }
-            datos = r.datos;
-            logMsg(`Datos de la empresa extraídos: ${Object.keys(datos).length} campos (${r.proxy})`);
+        const r = await descargaDatos(ticker);
+        if (!r) {
+            resumenDiv.textContent =
+                "No se han podido descargar los datos de " + ticker +
+                ": ning\u00fan proxy CORS respondi\u00f3 con la ficha de Finviz. " +
+                "Revisa el log e int\u00e9ntalo de nuevo en unos minutos.";
+            logMsg("Todos los proxies han fallado.");
+            return;
         }
 
-        await pinta(ticker, filtros, datos);
+        logMsg("Datos de la empresa extraidos: " + Object.keys(r.datos).length +
+               " campos (via " + r.proxy + ")");
+
+        await pinta(ticker, filtros, r.datos);
 
     } catch (e) {
-        logMsg(`✗ Error inesperado: ${e.message}`);
-        resumenDiv.textContent = `Error inesperado: ${e.message}`;
+        logMsg("Error inesperado: " + e.message);
+        resumenDiv.textContent = "Error inesperado: " + e.message;
     } finally {
         compareBtn.disabled = false;
-        pasteBtn.disabled = false;
     }
 }
 
-compareBtn.addEventListener("click", () => runComparison(false));
-pasteBtn.addEventListener("click", () => runComparison(true));
+compareBtn.addEventListener("click", runComparison);
 loadScreeners();
