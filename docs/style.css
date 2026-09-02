@@ -48,9 +48,38 @@ th {
   padding: 10px;
   height: 150px;
   overflow-y: auto;
+  white-space: pre-wrap;
 }
 
 #resumen {
   margin-top: 15px;
   font-weight: bold;
+}
+
+/* --- Bloque de pegado manual --- */
+#pasteArea {
+  margin-top: 15px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+  background-color: #fafafa;
+}
+
+#pasteArea summary {
+  cursor: pointer;
+  font-weight: bold;
+}
+
+#pasteArea .ayuda {
+  font-size: 0.9em;
+  color: #555;
+  line-height: 1.5;
+}
+
+#pasteBox {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 0.85em;
+  margin: 5px 0;
 }
