@@ -1,17 +1,28 @@
 /* =========================================================================
    Comparador empresa vs screener (Finviz)
+   100% cliente: no hay backend. Solo HTML + JS estatico en GitHub Pages.
    ========================================================================= */
 
 const tickerInput = document.getElementById("ticker");
 const screenerSelect = document.getElementById("screenerSelect");
 const customURLInput = document.getElementById("customURL");
 const compareBtn = document.getElementById("compareBtn");
+const pasteBtn = document.getElementById("pasteBtn");
+const pasteArea = document.getElementById("pasteArea");
+const pasteBox = document.getElementById("pasteBox");
 const resultsTable = document.getElementById("resultsTable").querySelector("tbody");
 const resumenDiv = document.getElementById("resumen");
 const log = document.getElementById("log");
 
 const SCREENER_POR_DEFECTO = "solventes";
 const VALOR_CUSTOM = "__custom__";
+
+// Tiempo maximo por intento de proxy. Sin esto, un proxy muerto bloquea ~20s.
+const TIMEOUT_MS = 9000;
+// Minimo de etiquetas reconocidas para dar por buena una descarga.
+const MIN_CAMPOS_VALIDOS = 8;
+// Clave de localStorage donde se recuerda el ultimo proxy que funciono.
+const LS_PROXY_OK = "finviz_proxy_ok";
 
 /* -------------------------------------------------------------------------
    1) DEFINICION DE FILTROS
@@ -47,7 +58,9 @@ const FILTROS = {
     "ta_averagetruerange_o1": { finviz: "ATR (14)",      op: ">",  valor: 1,     texto: "> 1" },
     "ta_rsi_nos40":           { finviz: "RSI (14)",      op: ">",  valor: 40,    texto: "> 40 (no sobrevendido)" },
     "ta_sma20_pa":            { finviz: "SMA20",         op: ">",  valor: 0,     texto: "> 0% (precio sobre SMA20)" },
-    // a5h = "5% or more below High"  ->  el dato "52W High" de Finviz es negativo
+    // OJO: revisar este mapeo con el test de cumplimiento del README.
+    // a5h se interpreta aqui como "a 5% o mas del maximo de 52 semanas",
+    // y el dato "52W High" de Finviz es negativo cuando el precio esta por debajo.
     "ta_highlow52w_a5h":      { finviz: "52W High",      op: "<=", valor: -5,    texto: "≤ -5% (a 5% o más del máximo)" },
     "ta_perf2_26wup":         { finviz: "Perf Half Y",   op: ">",  valor: 0,     texto: "> 0%" },
     "ta_perf_3yup":           { finviz: "Perf 3Y",       op: ">",  valor: 0,     texto: "> 0%" }
@@ -66,14 +79,32 @@ const ORDEN = [
 
 // Etiquetas alternativas que Finviz ha usado a lo largo del tiempo
 const ALIAS = {
-    "Oper. Margin": ["Operating Margin", "Opern Margin"],
+    "Oper. Margin": ["Operating Margin", "Opern Margin", "Operating Margin (ttm)"],
+    "Gross Margin": ["Gross Margin (ttm)"],
     "Shs Float": ["Float", "Shs Float / Outstanding"],
-    "ATR (14)": ["ATR"],
-    "RSI (14)": ["RSI"],
-    "Short Float": ["Short Float / Ratio", "Short Interest Share"],
-    "Perf Half Y": ["Perf 26W", "Perf Half"],
-    "Inst Own": ["Institutional Ownership"]
+    "ATR (14)": ["ATR", "ATR (14) "],
+    "RSI (14)": ["RSI", "RSI (14) "],
+    "Short Float": ["Short Float / Ratio", "Short Interest Share", "Short Float / Short Ratio"],
+    "Perf Half Y": ["Perf 26W", "Perf Half", "Perf Half Year"],
+    "Perf 3Y": ["Perf 3Y ", "Perf 3 Y", "Perf 3Year"],
+    "Inst Own": ["Institutional Ownership"],
+    "Rel Volume": ["Rel Vol", "Relative Volume"],
+    "52W High": ["52W High ", "52-Week High"],
+    "EV/Sales": ["EV / Sales"],
+    "Forward P/E": ["Fwd P/E"],
+    "LT Debt/Eq": ["LT Debt/Equity"],
+    "Debt/Eq": ["Debt/Equity", "Total Debt/Equity"]
 };
+
+// Conjunto de etiquetas que sabemos leer -> sirve para validar una descarga
+const ETIQUETAS_CONOCIDAS = new Set();
+(function construyeConocidas() {
+    for (const codigo of Object.keys(FILTROS)) {
+        const etiqueta = FILTROS[codigo].finviz;
+        ETIQUETAS_CONOCIDAS.add(normaliza(etiqueta));
+        for (const alt of (ALIAS[etiqueta] || [])) ETIQUETAS_CONOCIDAS.add(normaliza(alt));
+    }
+})();
 
 /* -------------------------------------------------------------------------
    2) UTILIDADES
@@ -85,6 +116,10 @@ function logMsg(msg) {
 
 function normaliza(s) {
     return String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function limpia(s) {
+    return String(s).replace(/\s+/g, " ").trim();
 }
 
 // Convierte "1,234.5", "12.34%", "+3.2%", "3.45T", "-" ... a numero
@@ -133,69 +168,163 @@ function buscaValor(datos, etiqueta) {
 }
 
 /* -------------------------------------------------------------------------
-   3) DESCARGA DE LA FICHA DE FINVIZ (via proxy CORS)
-   GitHub Pages no puede llamar a finviz.com directamente (CORS), y el proxy
-   antiguo "corsproxy.io/?<url>" ya no funciona sin API key desde un dominio
-   publico. Se prueban varios proxies y varias URLs de Finviz hasta que uno
-   devuelva una pagina con la tabla de datos.
+   3) EXTRACCION DE DATOS
+   Dos parsers: uno para HTML (cualquier layout de Finviz) y otro para el
+   texto/markdown que devuelven algunos proxies que renderizan la pagina.
    ------------------------------------------------------------------------- */
-const PROXIES = [
-    { nombre: "allorigins", build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
-    { nombre: "codetabs",   build: u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
-    { nombre: "corsproxy",  build: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
-    { nombre: "thingproxy", build: u => `https://thingproxy.freeboard.io/fetch/${u}` }
-];
 
-async function descargaFicha(ticker) {
-    const objetivos = [
-        `https://finviz.com/quote.ashx?t=${ticker}&p=d`,
-        `https://finviz.com/stock?t=${ticker}&p=d`
-    ];
-
-    for (const objetivo of objetivos) {
-        for (const proxy of PROXIES) {
-            const url = proxy.build(objetivo);
-            try {
-                logMsg(`Intentando ${proxy.nombre} -> ${objetivo}`);
-                const resp = await fetch(url, { cache: "no-store" });
-                if (!resp.ok) {
-                    logMsg(`  ✗ HTTP ${resp.status}`);
-                    continue;
-                }
-                const html = await resp.text();
-                if (html && html.indexOf("snapshot-table2") !== -1) {
-                    logMsg(`  ✓ OK con ${proxy.nombre} (${html.length} bytes)`);
-                    return html;
-                }
-                logMsg(`  ✗ Respuesta sin tabla de datos (${html.length} bytes)`);
-            } catch (e) {
-                logMsg(`  ✗ Error: ${e.message}`);
-            }
-        }
-    }
-    return null;
-}
-
-function extraeDatos(html) {
+// Recorre TODAS las tablas del documento buscando pares clave/valor.
+// No depende del nombre de clase "snapshot-table2", que Finviz ya ha cambiado.
+function extraeDatosHTML(html) {
     const doc = new DOMParser().parseFromString(html, "text/html");
     const datos = {};
 
-    const tablas = doc.querySelectorAll("table.snapshot-table2, .snapshot-table2");
-    tablas.forEach(tabla => {
-        tabla.querySelectorAll("tr").forEach(tr => {
-            const tds = Array.from(tr.querySelectorAll("td"));
-            for (let i = 0; i + 1 < tds.length; i += 2) {
-                const clave = tds[i].textContent.replace(/\s+/g, " ").trim();
-                const valor = tds[i + 1].textContent.replace(/\s+/g, " ").trim();
-                if (clave) datos[clave] = valor;
-            }
-        });
+    doc.querySelectorAll("tr").forEach(tr => {
+        const celdas = Array.from(tr.children)
+            .filter(c => c.tagName === "TD" || c.tagName === "TH");
+        if (celdas.length < 2 || celdas.length % 2 !== 0) return;
+
+        for (let i = 0; i + 1 < celdas.length; i += 2) {
+            const clave = limpia(celdas[i].textContent);
+            const valor = limpia(celdas[i + 1].textContent);
+            if (!clave || !valor) continue;
+            if (clave.length > 32) continue;
+            if (/^[\d.,%+-]+$/.test(clave)) continue;   // la "clave" es un numero -> no es un par
+            if (datos[clave] === undefined) datos[clave] = valor;
+        }
     });
     return datos;
 }
 
+// Parser para respuestas en texto plano / markdown con tablas tipo | k | v | k | v |
+function extraeDatosTexto(texto) {
+    const datos = {};
+    for (const linea of String(texto).split("\n")) {
+        if (linea.indexOf("|") === -1) continue;
+        if (/^[\s|:-]+$/.test(linea)) continue;         // fila separadora de markdown
+
+        let celdas = linea.split("|").map(s => limpia(s));
+        while (celdas.length && celdas[0] === "") celdas.shift();
+        while (celdas.length && celdas[celdas.length - 1] === "") celdas.pop();
+        if (celdas.length < 2 || celdas.length % 2 !== 0) continue;
+
+        for (let i = 0; i + 1 < celdas.length; i += 2) {
+            const clave = celdas[i], valor = celdas[i + 1];
+            if (!clave || !valor || clave.length > 32) continue;
+            if (/^[\d.,%+-]+$/.test(clave)) continue;
+            if (datos[clave] === undefined) datos[clave] = valor;
+        }
+    }
+    return datos;
+}
+
+function cuentaConocidos(datos) {
+    let n = 0;
+    for (const k of Object.keys(datos)) {
+        if (ETIQUETAS_CONOCIDAS.has(normaliza(k))) n++;
+    }
+    return n;
+}
+
 /* -------------------------------------------------------------------------
-   4) CARGA DE CSVs
+   4) DESCARGA VIA PROXY CORS
+   GitHub Pages no puede llamar a finviz.com directamente (CORS) y no queremos
+   backend propio, asi que dependemos de proxies publicos. Se lanzan TODOS en
+   paralelo con timeout individual y gana el primero que devuelva datos utiles.
+   ------------------------------------------------------------------------- */
+const PROXIES = [
+    { nombre: "allorigins-raw",  tipo: "html", build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+    { nombre: "allorigins-json", tipo: "json", build: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}` },
+    { nombre: "codetabs",        tipo: "html", build: u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
+    { nombre: "corsproxy",       tipo: "html", build: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
+    { nombre: "isomorphic-git",  tipo: "html", build: u => `https://cors.isomorphic-git.org/${u}` },
+    { nombre: "thingproxy",      tipo: "html", build: u => `https://thingproxy.freeboard.io/fetch/${u}` },
+    // jina renderiza la pagina y devuelve markdown: esquiva bloqueos de scraping
+    { nombre: "jina-reader",     tipo: "texto", build: u => `https://r.jina.ai/${u}` }
+];
+
+async function fetchConTimeout(url, ms) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), ms);
+    try {
+        return await fetch(url, { cache: "no-store", signal: ctrl.signal, redirect: "follow" });
+    } finally {
+        clearTimeout(id);
+    }
+}
+
+async function intentaProxy(proxy, objetivo) {
+    const url = proxy.build(objetivo);
+    const resp = await fetchConTimeout(url, TIMEOUT_MS);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const cuerpo = await resp.text();
+    if (!cuerpo || cuerpo.length < 200) throw new Error("respuesta vacía");
+
+    let datos;
+    if (proxy.tipo === "json") {
+        const j = JSON.parse(cuerpo);
+        datos = extraeDatosHTML(j.contents || "");
+    } else if (proxy.tipo === "texto") {
+        datos = extraeDatosTexto(cuerpo);
+        // jina a veces devuelve HTML igualmente
+        if (cuentaConocidos(datos) < MIN_CAMPOS_VALIDOS) datos = extraeDatosHTML(cuerpo);
+    } else {
+        datos = extraeDatosHTML(cuerpo);
+    }
+
+    const validos = cuentaConocidos(datos);
+    if (validos < MIN_CAMPOS_VALIDOS) {
+        throw new Error(`solo ${validos} campos reconocidos (${cuerpo.length} bytes)`);
+    }
+    return { datos, validos, proxy: proxy.nombre };
+}
+
+// Lanza todas las combinaciones proxy x URL a la vez y devuelve la primera util.
+function descargaDatos(ticker) {
+    const objetivos = [
+        `https://finviz.com/quote.ashx?t=${ticker}&p=d`,
+        `https://elite.finviz.com/quote.ashx?t=${ticker}&p=d`
+    ];
+
+    const preferido = localStorage.getItem(LS_PROXY_OK);
+    const proxiesOrdenados = PROXIES.slice().sort((a, b) =>
+        (b.nombre === preferido) - (a.nombre === preferido));
+
+    const candidatos = [];
+    for (const objetivo of objetivos) {
+        for (const proxy of proxiesOrdenados) candidatos.push({ proxy, objetivo });
+    }
+
+    logMsg(`Lanzando ${candidatos.length} intentos en paralelo (timeout ${TIMEOUT_MS / 1000}s cada uno)...`);
+
+    return new Promise(resolve => {
+        let pendientes = candidatos.length;
+        let resuelto = false;
+
+        candidatos.forEach(({ proxy, objetivo }) => {
+            intentaProxy(proxy, objetivo)
+                .then(r => {
+                    if (resuelto) return;
+                    resuelto = true;
+                    logMsg(`  ✓ ${proxy.nombre}: ${r.validos} campos reconocidos`);
+                    try { localStorage.setItem(LS_PROXY_OK, proxy.nombre); } catch (e) { /* modo privado */ }
+                    resolve(r);
+                })
+                .catch(e => {
+                    const motivo = e.name === "AbortError" ? `timeout ${TIMEOUT_MS / 1000}s` : e.message;
+                    logMsg(`  ✗ ${proxy.nombre}: ${motivo}`);
+                })
+                .finally(() => {
+                    pendientes--;
+                    if (pendientes === 0 && !resuelto) resolve(null);
+                });
+        });
+    });
+}
+
+/* -------------------------------------------------------------------------
+   5) CARGA DE CSVs
    ------------------------------------------------------------------------- */
 async function loadScreeners() {
     screenerSelect.innerHTML = "";
@@ -227,7 +356,6 @@ async function loadScreeners() {
             if (!porDefecto && screenerSelect.options.length === 2) porDefecto = option;
         }
 
-        // Screener seleccionado por defecto
         if (porDefecto) screenerSelect.value = porDefecto.value;
     } catch (e) {
         logMsg(`No se pudo cargar urls_screeners_finviz.csv: ${e.message}`);
@@ -240,7 +368,9 @@ screenerSelect.addEventListener("change", () => {
     customURLInput.style.display = screenerSelect.value === VALOR_CUSTOM ? "inline-block" : "none";
 });
 
+let descripcionesCache = null;
 async function loadDescriptions() {
+    if (descripcionesCache) return descripcionesCache;
     const map = {};
     try {
         const resp = await fetch("descripcion_filtros.csv", { cache: "no-store" });
@@ -253,6 +383,7 @@ async function loadDescriptions() {
     } catch (e) {
         logMsg(`No se pudo cargar descripcion_filtros.csv: ${e.message}`);
     }
+    descripcionesCache = map;
     return map;
 }
 
@@ -269,110 +400,132 @@ function buscaDescripcion(descripciones, etiqueta) {
 }
 
 /* -------------------------------------------------------------------------
-   5) COMPARACION
+   6) COMPARACION
    ------------------------------------------------------------------------- */
-async function runComparison() {
-    log.textContent = "";
-    resultsTable.innerHTML = "";
-    resumenDiv.textContent = "";
-    compareBtn.disabled = true;
+async function pinta(ticker, filtros, datos) {
+    const descripciones = await loadDescriptions();
 
-    try {
-        const ticker = tickerInput.value.trim().toUpperCase();
+    const ordenados = ORDEN.filter(c => filtros.includes(c))
+        .concat(filtros.filter(c => !ORDEN.includes(c)));
 
-        let screenerURL = screenerSelect.value;
-        if (screenerURL === VALOR_CUSTOM) screenerURL = customURLInput.value.trim();
+    let ok = 0, nok = 0, na = 0;
 
-        if (!ticker || !screenerURL) {
-            alert("Rellena Ticker y Screener (o URL)");
-            return;
-        }
+    for (const codigo of ordenados) {
+        const def = FILTROS[codigo];
+        const etiqueta = def ? def.finviz : codigo;
+        const condicion = def ? def.texto : "(filtro no soportado)";
 
-        logMsg(`Comparando ${ticker} contra: ${screenerSelect.options[screenerSelect.selectedIndex].textContent}`);
+        const bruto = def ? buscaValor(datos, etiqueta) : undefined;
+        const mostrado = (bruto === undefined || bruto === "") ? "N/A" : bruto;
 
-        // --- Filtros del screener ---
-        const qs = screenerURL.split("?")[1] || "";
-        const f = new URLSearchParams(qs).get("f");
-        const filtros = f ? f.split(",").map(x => x.trim()).filter(Boolean) : [];
-        if (!filtros.length) {
-            resumenDiv.textContent = "La URL del screener no contiene filtros (parámetro 'f').";
-            logMsg("⚠ La URL del screener no tiene parámetro 'f'.");
-            return;
-        }
-        logMsg(`Filtros del screener (${filtros.length}): ${filtros.join(", ")}`);
-
-        // --- Datos de la empresa ---
-        const html = await descargaFicha(ticker);
-        if (!html) {
-            resumenDiv.textContent =
-                `No se han podido descargar los datos de ${ticker}. ` +
-                `Ningún proxy CORS respondió con la ficha de Finviz (revisa el log).`;
-            logMsg("✗ Comparación abortada: sin datos de la empresa.");
-            return;
-        }
-
-        const datos = extraeDatos(html);
-        const nCampos = Object.keys(datos).length;
-        logMsg(`Datos de la empresa extraídos: ${nCampos} campos`);
-        if (nCampos === 0) {
-            resumenDiv.textContent = `Se descargó la página de ${ticker} pero no se pudo leer la tabla de datos.`;
-            return;
-        }
-
-        const descripciones = await loadDescriptions();
-
-        // --- Ordenar filtros ---
-        const ordenados = ORDEN.filter(c => filtros.includes(c))
-            .concat(filtros.filter(c => !ORDEN.includes(c)));
-
-        let ok = 0, nok = 0, na = 0;
-
-        for (const codigo of ordenados) {
-            const def = FILTROS[codigo];
-            const etiqueta = def ? def.finviz : codigo;
-            const condicion = def ? def.texto : "(filtro no soportado)";
-
-            const bruto = def ? buscaValor(datos, etiqueta) : undefined;
-            const mostrado = (bruto === undefined || bruto === "") ? "N/A" : bruto;
-
-            let estado = "na";
-            if (def) {
-                const num = aNumero(bruto, def.escala);
-                if (!isNaN(num)) {
-                    const r = compara(num, def.op, def.valor);
-                    if (r !== null) estado = r ? "ok" : "nok";
-                }
+        let estado = "na";
+        if (def) {
+            const num = aNumero(bruto, def.escala);
+            if (!isNaN(num)) {
+                const r = compara(num, def.op, def.valor);
+                if (r !== null) estado = r ? "ok" : "nok";
             }
+        }
 
-            if (estado === "ok") ok++;
-            else if (estado === "nok") nok++;
-            else na++;
+        if (estado === "ok") ok++;
+        else if (estado === "nok") nok++;
+        else na++;
 
-            const etiquetaTexto = estado === "ok" ? "CUMPLE" : (estado === "nok" ? "INCUMPLE" : "N/A");
+        const etiquetaTexto = estado === "ok" ? "CUMPLE" : (estado === "nok" ? "INCUMPLE" : "N/A");
 
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
       <td>${etiqueta}</td>
       <td>${condicion}</td>
       <td>${mostrado}</td>
       <td class="${estado}">${etiquetaTexto}</td>
       <td>${buscaDescripcion(descripciones, etiqueta)}</td>
     `;
-            resultsTable.appendChild(tr);
+        resultsTable.appendChild(tr);
+    }
+
+    resumenDiv.textContent =
+        `${ticker}: ${ok} CUMPLE · ${nok} INCUMPLE · ${na} N/A` +
+        (nok === 0 && na === 0 ? " → la empresa pasa todos los criterios del screener." : "");
+    logMsg(`✅ Comparación finalizada: ${ok} OK / ${nok} NOK / ${na} N/A`);
+}
+
+function leeFiltrosScreener() {
+    let screenerURL = screenerSelect.value;
+    if (screenerURL === VALOR_CUSTOM) screenerURL = customURLInput.value.trim();
+    if (!screenerURL) return null;
+
+    const qs = screenerURL.split("?")[1] || "";
+    const f = new URLSearchParams(qs).get("f");
+    return f ? f.split(",").map(x => x.trim()).filter(Boolean) : [];
+}
+
+async function runComparison(usarPegado) {
+    log.textContent = "";
+    resultsTable.innerHTML = "";
+    resumenDiv.textContent = "";
+    compareBtn.disabled = true;
+    pasteBtn.disabled = true;
+
+    try {
+        const ticker = tickerInput.value.trim().toUpperCase();
+        const filtros = leeFiltrosScreener();
+
+        if (!ticker || filtros === null) {
+            alert("Rellena Ticker y Screener (o URL)");
+            return;
+        }
+        if (!filtros.length) {
+            resumenDiv.textContent = "La URL del screener no contiene filtros (parámetro 'f').";
+            logMsg("⚠ La URL del screener no tiene parámetro 'f'.");
+            return;
         }
 
-        resumenDiv.textContent =
-            `${ticker}: ${ok} CUMPLE · ${nok} INCUMPLE · ${na} N/A` +
-            (nok === 0 && na === 0 ? " → la empresa pasa todos los criterios del screener." : "");
-        logMsg(`✅ Comparación finalizada: ${ok} OK / ${nok} NOK / ${na} N/A`);
+        logMsg(`Comparando ${ticker} contra: ${screenerSelect.options[screenerSelect.selectedIndex].textContent}`);
+        logMsg(`Filtros del screener (${filtros.length}): ${filtros.join(", ")}`);
+
+        let datos = null;
+
+        if (usarPegado) {
+            const pegado = pasteBox.value.trim();
+            if (!pegado) {
+                alert("Pega primero el código fuente de la página de Finviz.");
+                return;
+            }
+            datos = extraeDatosHTML(pegado);
+            if (cuentaConocidos(datos) < MIN_CAMPOS_VALIDOS) datos = extraeDatosTexto(pegado);
+            logMsg(`Usando HTML pegado: ${cuentaConocidos(datos)} campos reconocidos.`);
+            if (cuentaConocidos(datos) < MIN_CAMPOS_VALIDOS) {
+                resumenDiv.textContent =
+                    "El texto pegado no contiene la tabla de datos de Finviz. " +
+                    "Asegúrate de copiar el código fuente completo (Ctrl+U → Ctrl+A → Ctrl+C).";
+                return;
+            }
+        } else {
+            const r = await descargaDatos(ticker);
+            if (!r) {
+                resumenDiv.textContent =
+                    `No se han podido descargar los datos de ${ticker}: ningún proxy CORS respondió ` +
+                    `con la ficha de Finviz. Usa la opción "Pegar HTML manualmente" de abajo.`;
+                logMsg("✗ Todos los proxies han fallado. Abriendo el modo manual.");
+                pasteArea.open = true;
+                return;
+            }
+            datos = r.datos;
+            logMsg(`Datos de la empresa extraídos: ${Object.keys(datos).length} campos (${r.proxy})`);
+        }
+
+        await pinta(ticker, filtros, datos);
 
     } catch (e) {
         logMsg(`✗ Error inesperado: ${e.message}`);
         resumenDiv.textContent = `Error inesperado: ${e.message}`;
     } finally {
         compareBtn.disabled = false;
+        pasteBtn.disabled = false;
     }
 }
 
-compareBtn.addEventListener("click", runComparison);
+compareBtn.addEventListener("click", () => runComparison(false));
+pasteBtn.addEventListener("click", () => runComparison(true));
 loadScreeners();
