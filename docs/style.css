@@ -49,3 +49,8 @@ th {
   height: 150px;
   overflow-y: auto;
 }
+
+#resumen {
+  margin-top: 15px;
+  font-weight: bold;
+}
