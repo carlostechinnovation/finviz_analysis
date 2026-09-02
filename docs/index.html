@@ -20,18 +20,32 @@
   <input type="text" id="customURL" placeholder="Introduce URL" style="display:none; width:80%;">
 </div>
 
-<button id="compareBtn">🔍 Comparar</button>
+<button id="compareBtn">馃攳 Comparar</button>
 
 <div id="resumen"></div>
+
+<details id="pasteArea">
+  <summary>馃搵 Pegar HTML manualmente (si fallan los proxies)</summary>
+  <p class="ayuda">
+    Finviz bloquea con frecuencia los proxies CORS p煤blicos. Si la descarga
+    autom谩tica falla, abre
+    <a id="finvizLink" href="https://finviz.com/quote.ashx?t=AAPL&amp;p=d" target="_blank" rel="noopener">la ficha de Finviz</a>,
+    pulsa <strong>Ctrl+U</strong> (ver c贸digo fuente), selecciona todo con
+    <strong>Ctrl+A</strong>, c贸pialo con <strong>Ctrl+C</strong> y p茅galo aqu铆.
+    Todo el procesado ocurre en tu navegador; no se env铆a nada a ning煤n servidor.
+  </p>
+  <textarea id="pasteBox" rows="8" placeholder="Pega aqu铆 el c贸digo fuente de la p谩gina de Finviz..."></textarea>
+  <button id="pasteBtn">馃搵 Comparar con el HTML pegado</button>
+</details>
 
 <table id="resultsTable">
   <thead>
     <tr>
       <th>Filtro</th>
-      <th>Condición Screener</th>
+      <th>Condici贸n Screener</th>
       <th>Valor Empresa</th>
-      <th>Comparación</th>
-      <th>Descripción</th>
+      <th>Comparaci贸n</th>
+      <th>Descripci贸n</th>
     </tr>
   </thead>
   <tbody></tbody>
@@ -40,5 +54,18 @@
 <pre id="log"></pre>
 
 <script src="app.js"></script>
+<script>
+  // Mantiene el enlace de ayuda sincronizado con el ticker escrito
+  (function () {
+    const t = document.getElementById("ticker");
+    const a = document.getElementById("finvizLink");
+    const sync = () => {
+      const v = (t.value || "AAPL").trim().toUpperCase();
+      a.href = `https://finviz.com/quote.ashx?t=${encodeURIComponent(v)}&p=d`;
+    };
+    t.addEventListener("input", sync);
+    sync();
+  })();
+</script>
 </body>
 </html>
