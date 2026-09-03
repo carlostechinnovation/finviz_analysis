@@ -18,12 +18,10 @@ const log = document.getElementById("log");
 const SCREENER_POR_DEFECTO = "solventes";
 const VALOR_CUSTOM = "__custom__";
 
-// Tiempo maximo por intento de proxy. Sin esto, un proxy muerto bloquea ~20s.
+// Tiempo maximo de espera a la llamada. Sin esto, un proxy caido bloquea ~20s.
 const TIMEOUT_MS = 9000;
 // Minimo de etiquetas reconocidas para dar por buena una descarga.
 const MIN_CAMPOS_VALIDOS = 8;
-// Clave de localStorage donde se recuerda el ultimo proxy que funciono.
-const LS_PROXY_OK = "finviz_proxy_ok";
 
 /* -------------------------------------------------------------------------
    1) DEFINICION DE FILTROS
@@ -195,28 +193,6 @@ function extraeDatosHTML(html) {
     return datos;
 }
 
-// Parser para respuestas en texto plano / markdown con tablas tipo | k | v | k | v |
-function extraeDatosTexto(texto) {
-    const datos = {};
-    for (const linea of String(texto).split("\n")) {
-        if (linea.indexOf("|") === -1) continue;
-        if (/^[\s|:-]+$/.test(linea)) continue;         // fila separadora de markdown
-
-        let celdas = linea.split("|").map(s => limpia(s));
-        while (celdas.length && celdas[0] === "") celdas.shift();
-        while (celdas.length && celdas[celdas.length - 1] === "") celdas.pop();
-        if (celdas.length < 2 || celdas.length % 2 !== 0) continue;
-
-        for (let i = 0; i + 1 < celdas.length; i += 2) {
-            const clave = celdas[i], valor = celdas[i + 1];
-            if (!clave || !valor || clave.length > 32) continue;
-            if (/^[\d.,%+-]+$/.test(clave)) continue;
-            if (datos[clave] === undefined) datos[clave] = valor;
-        }
-    }
-    return datos;
-}
-
 function cuentaConocidos(datos) {
     let n = 0;
     for (const k of Object.keys(datos)) {
@@ -228,19 +204,12 @@ function cuentaConocidos(datos) {
 /* -------------------------------------------------------------------------
    4) DESCARGA VIA PROXY CORS
    GitHub Pages no puede llamar a finviz.com directamente (CORS) y no hay
-   backend propio, asi que dependemos de proxies publicos. Se lanzan TODOS en
-   paralelo con timeout individual y gana el primero que devuelva datos utiles.
+   backend propio, asi que se usa un unico proxy publico con una unica
+   llamada web (sin reintentos en paralelo).
    ------------------------------------------------------------------------- */
-const PROXIES = [
-    { nombre: "allorigins-raw",  tipo: "html",  build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u) },
-    { nombre: "allorigins-json", tipo: "json",  build: u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u) },
-    { nombre: "codetabs",        tipo: "html",  build: u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u) },
-    { nombre: "corsproxy",       tipo: "html",  build: u => "https://corsproxy.io/?url=" + encodeURIComponent(u) },
-    { nombre: "isomorphic-git",  tipo: "html",  build: u => "https://cors.isomorphic-git.org/" + u },
-    { nombre: "thingproxy",      tipo: "html",  build: u => "https://thingproxy.freeboard.io/fetch/" + u },
-    // jina renderiza la pagina y devuelve markdown: esquiva bloqueos de scraping
-    { nombre: "jina-reader",     tipo: "texto", build: u => "https://r.jina.ai/" + u }
-];
+function construyeURLProxy(objetivo) {
+    return "https://api.allorigins.win/raw?url=" + encodeURIComponent(objetivo);
+}
 
 async function fetchConTimeout(url, ms) {
     const ctrl = new AbortController();
@@ -252,79 +221,42 @@ async function fetchConTimeout(url, ms) {
     }
 }
 
-async function intentaProxy(proxy, objetivo) {
-    const url = proxy.build(objetivo);
-    const resp = await fetchConTimeout(url, TIMEOUT_MS);
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
+// Descarga la ficha de Finviz para el ticker con una unica llamada web.
+async function descargaDatos(ticker) {
+    const objetivo = "https://finviz.com/quote.ashx?t=" + ticker + "&p=d";
+    const url = construyeURLProxy(objetivo);
+
+    logMsg("Descargando datos de " + ticker + " (timeout " + (TIMEOUT_MS / 1000) + "s)...");
+
+    let resp;
+    try {
+        resp = await fetchConTimeout(url, TIMEOUT_MS);
+    } catch (e) {
+        const motivo = e.name === "AbortError" ? "timeout " + (TIMEOUT_MS / 1000) + "s" : e.message;
+        logMsg("  [FALLO] " + motivo);
+        return null;
+    }
+
+    if (!resp.ok) {
+        logMsg("  [FALLO] HTTP " + resp.status);
+        return null;
+    }
 
     const cuerpo = await resp.text();
-    if (!cuerpo || cuerpo.length < 200) throw new Error("respuesta vacia");
-
-    let datos;
-    if (proxy.tipo === "json") {
-        const j = JSON.parse(cuerpo);
-        datos = extraeDatosHTML(j.contents || "");
-    } else if (proxy.tipo === "texto") {
-        datos = extraeDatosTexto(cuerpo);
-        // jina a veces devuelve HTML igualmente
-        if (cuentaConocidos(datos) < MIN_CAMPOS_VALIDOS) datos = extraeDatosHTML(cuerpo);
-    } else {
-        datos = extraeDatosHTML(cuerpo);
+    if (!cuerpo || cuerpo.length < 200) {
+        logMsg("  [FALLO] respuesta vacia");
+        return null;
     }
 
+    const datos = extraeDatosHTML(cuerpo);
     const validos = cuentaConocidos(datos);
     if (validos < MIN_CAMPOS_VALIDOS) {
-        throw new Error("solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
-    }
-    return { datos: datos, validos: validos, proxy: proxy.nombre };
-}
-
-// Lanza todas las combinaciones proxy x URL a la vez y devuelve la primera util.
-function descargaDatos(ticker) {
-    const objetivos = [
-        "https://finviz.com/quote.ashx?t=" + ticker + "&p=d",
-        "https://elite.finviz.com/quote.ashx?t=" + ticker + "&p=d"
-    ];
-
-    let preferido = null;
-    try { preferido = localStorage.getItem(LS_PROXY_OK); } catch (e) { /* modo privado */ }
-
-    const proxiesOrdenados = PROXIES.slice().sort((a, b) =>
-        (b.nombre === preferido) - (a.nombre === preferido));
-
-    const candidatos = [];
-    for (const objetivo of objetivos) {
-        for (const proxy of proxiesOrdenados) candidatos.push({ proxy: proxy, objetivo: objetivo });
+        logMsg("  [FALLO] solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
+        return null;
     }
 
-    logMsg("Lanzando " + candidatos.length + " intentos en paralelo (timeout " +
-           (TIMEOUT_MS / 1000) + "s cada uno)...");
-
-    return new Promise(resolve => {
-        let pendientes = candidatos.length;
-        let resuelto = false;
-
-        candidatos.forEach(c => {
-            intentaProxy(c.proxy, c.objetivo)
-                .then(r => {
-                    if (resuelto) return;
-                    resuelto = true;
-                    logMsg("  [OK] " + c.proxy.nombre + ": " + r.validos + " campos reconocidos");
-                    try { localStorage.setItem(LS_PROXY_OK, c.proxy.nombre); } catch (e) { /* modo privado */ }
-                    resolve(r);
-                })
-                .catch(e => {
-                    const motivo = e.name === "AbortError"
-                        ? "timeout " + (TIMEOUT_MS / 1000) + "s"
-                        : e.message;
-                    logMsg("  [FALLO] " + c.proxy.nombre + ": " + motivo);
-                })
-                .finally(() => {
-                    pendientes--;
-                    if (pendientes === 0 && !resuelto) resolve(null);
-                });
-        });
-    });
+    logMsg("  [OK] " + validos + " campos reconocidos");
+    return { datos: datos, validos: validos };
 }
 
 /* -------------------------------------------------------------------------
@@ -497,14 +429,13 @@ async function runComparison() {
         if (!r) {
             resumenDiv.textContent =
                 "No se han podido descargar los datos de " + ticker +
-                ": ning\u00fan proxy CORS respondi\u00f3 con la ficha de Finviz. " +
+                ": el proxy CORS no respondi\u00f3 con la ficha de Finviz. " +
                 "Revisa el log e int\u00e9ntalo de nuevo en unos minutos.";
-            logMsg("Todos los proxies han fallado.");
+            logMsg("La descarga ha fallado.");
             return;
         }
 
-        logMsg("Datos de la empresa extraidos: " + Object.keys(r.datos).length +
-               " campos (via " + r.proxy + ")");
+        logMsg("Datos de la empresa extraidos: " + Object.keys(r.datos).length + " campos");
 
         await pinta(ticker, filtros, r.datos);
 
