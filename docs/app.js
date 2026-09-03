@@ -176,17 +176,22 @@ function buscaValor(datos, etiqueta) {
    3) EXTRACCION DE DATOS
    ------------------------------------------------------------------------- */
 
-// Recorre el markdown que devuelve r.jina.ai, con lineas tipo
-// "Market Cap**4789.96B**" o, con enlaces, "[Short Float](url)[**0.80%**](url)".
+// Recorre el markdown que devuelve r.jina.ai buscando pares "Clave**Valor**"
+// (o, con enlaces, "[Clave](url)[**Valor**](url)"). r.jina.ai NO garantiza un
+// salto de linea por campo: a veces los mete todos seguidos en una sola linea,
+// asi que se busca en todo el texto en vez de trocear por lineas. El valor se
+// limita a una sola linea y pocos caracteres para no confundirlo con frases
+// sueltas en negrita (p.ej. el precio "**339.08**" o avisos de marketing) que
+// no van precedidas de una etiqueta real.
 function extraeDatosMarkdown(texto) {
     const datos = {};
-    for (let linea of String(texto).split("\n")) {
-        linea = linea.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
-        const celdas = linea.split("**");
-        if (celdas.length < 2) continue;
+    const limpio = String(texto).replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
 
-        const clave = limpia(celdas[0]);
-        const valor = limpia(celdas[1]);
+    const re = /([A-Za-z0-9][A-Za-z0-9 /().%+-]{0,30})\*\*([^*\r\n]{1,40}?)\*\*/g;
+    let m;
+    while ((m = re.exec(limpio)) !== null) {
+        const clave = limpia(m[1]);
+        const valor = limpia(m[2]);
         if (!clave || !valor) continue;
         if (clave.length > 32) continue;
         if (/^[\d.,%+-]+$/.test(clave)) continue;   // la "clave" es un numero -> no es un par
