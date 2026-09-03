@@ -18,8 +18,10 @@ const log = document.getElementById("log");
 const SCREENER_POR_DEFECTO = "solventes";
 const VALOR_CUSTOM = "__custom__";
 
-// Tiempo maximo de espera a la llamada. Sin esto, un proxy caido bloquea ~20s.
-const TIMEOUT_MS = 9000;
+// Tiempo maximo de espera a la llamada. r.jina.ai renderiza la pagina en su
+// servidor antes de responder, lo que tarda varios segundos; sin este limite
+// una caida del servicio dejaria la pagina esperando indefinidamente.
+const TIMEOUT_MS = 20000;
 // Minimo de etiquetas reconocidas para dar por buena una descarga.
 const MIN_CAMPOS_VALIDOS = 8;
 
@@ -131,6 +133,10 @@ function aNumero(txt, escala) {
     s = s.split("/")[0].trim();
     s = s.replace(/,/g, "").replace(/%/g, "").replace(/\$/g, "").replace(/^\+/, "").trim();
 
+    // El lector jina.ai junta a veces dos numeros en un campo (p.ej. "52W High"
+    // llega como "344.57 -4.75%"): el segundo es el que usan los filtros.
+    if (/\s/.test(s)) s = s.split(/\s+/).pop();
+
     const m = s.match(/^(-?\d*\.?\d+)\s*([KMBT])?$/i);
     if (!m) return NaN;
 
@@ -170,26 +176,22 @@ function buscaValor(datos, etiqueta) {
    3) EXTRACCION DE DATOS
    ------------------------------------------------------------------------- */
 
-// Recorre TODAS las tablas del documento buscando pares clave/valor.
-// No depende del nombre de clase "snapshot-table2", que Finviz ya ha cambiado.
-function extraeDatosHTML(html) {
-    const doc = new DOMParser().parseFromString(html, "text/html");
+// Recorre el markdown que devuelve r.jina.ai, con lineas tipo
+// "Market Cap**4789.96B**" o, con enlaces, "[Short Float](url)[**0.80%**](url)".
+function extraeDatosMarkdown(texto) {
     const datos = {};
+    for (let linea of String(texto).split("\n")) {
+        linea = linea.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+        const celdas = linea.split("**");
+        if (celdas.length < 2) continue;
 
-    doc.querySelectorAll("tr").forEach(tr => {
-        const celdas = Array.from(tr.children)
-            .filter(c => c.tagName === "TD" || c.tagName === "TH");
-        if (celdas.length < 2 || celdas.length % 2 !== 0) return;
-
-        for (let i = 0; i + 1 < celdas.length; i += 2) {
-            const clave = limpia(celdas[i].textContent);
-            const valor = limpia(celdas[i + 1].textContent);
-            if (!clave || !valor) continue;
-            if (clave.length > 32) continue;
-            if (/^[\d.,%+-]+$/.test(clave)) continue;   // la "clave" es un numero -> no es un par
-            if (datos[clave] === undefined) datos[clave] = valor;
-        }
-    });
+        const clave = limpia(celdas[0]);
+        const valor = limpia(celdas[1]);
+        if (!clave || !valor) continue;
+        if (clave.length > 32) continue;
+        if (/^[\d.,%+-]+$/.test(clave)) continue;   // la "clave" es un numero -> no es un par
+        if (datos[clave] === undefined) datos[clave] = valor;
+    }
     return datos;
 }
 
@@ -205,10 +207,12 @@ function cuentaConocidos(datos) {
    4) DESCARGA VIA PROXY CORS
    GitHub Pages no puede llamar a finviz.com directamente (CORS) y no hay
    backend propio, asi que se usa un unico proxy publico con una unica
-   llamada web (sin reintentos en paralelo).
+   llamada web (sin reintentos en paralelo). r.jina.ai renderiza la pagina
+   en su servidor y la devuelve como texto/markdown con cabeceras CORS
+   abiertas.
    ------------------------------------------------------------------------- */
 function construyeURLProxy(objetivo) {
-    return "https://api.allorigins.win/raw?url=" + encodeURIComponent(objetivo);
+    return "https://r.jina.ai/" + objetivo;
 }
 
 async function fetchConTimeout(url, ms) {
@@ -248,7 +252,7 @@ async function descargaDatos(ticker) {
         return null;
     }
 
-    const datos = extraeDatosHTML(cuerpo);
+    const datos = extraeDatosMarkdown(cuerpo);
     const validos = cuentaConocidos(datos);
     if (validos < MIN_CAMPOS_VALIDOS) {
         logMsg("  [FALLO] solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
