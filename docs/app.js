@@ -49,6 +49,12 @@ const FILTROS = {
     "fa_debteq_u1":           { finviz: "Debt/Eq",       op: "<",  valor: 1,     texto: "< 1" },
     "fa_ltdebteq_u1":         { finviz: "LT Debt/Eq",    op: "<",  valor: 1,     texto: "< 1" },
 
+    // --- Crecimiento / dilucion ---
+    // Finviz no tiene filtro directo de "variacion del numero de acciones".
+    // El BPA creciente es el proxy: la dilucion exagerada lo aplasta aunque los
+    // ingresos totales suban.
+    "fa_epsyoyttm_pos":       { finviz: "EPS Y/Y TTM",   op: ">",  valor: 0,     texto: "> 0% (BPA creciente: sin diluci\u00f3n exagerada)" },
+
     // --- Propiedad / liquidez ---
     "sh_instown_o30":         { finviz: "Inst Own",      op: ">",  valor: 30,    texto: "> 30%" },
     "sh_float_o1":            { finviz: "Shs Float",     op: ">",  valor: 1e6,   texto: "> 1M", escala: true },
@@ -59,10 +65,10 @@ const FILTROS = {
     "ta_averagetruerange_o1": { finviz: "ATR (14)",      op: ">",  valor: 1,     texto: "> 1" },
     "ta_rsi_nos40":           { finviz: "RSI (14)",      op: ">",  valor: 40,    texto: "> 40 (no sobrevendido)" },
     "ta_sma20_pa":            { finviz: "SMA20",         op: ">",  valor: 0,     texto: "> 0% (precio sobre SMA20)" },
-    // OJO: revisar este mapeo con el test de cumplimiento del README.
-    // a5h se interpreta aqui como "a 5% o mas del maximo de 52 semanas",
-    // y el dato "52W High" de Finviz es negativo cuando el precio esta por debajo.
-    "ta_highlow52w_a5h":      { finviz: "52W High",      op: "<=", valor: -5,    texto: "<= -5% (a 5% o m\u00e1s del m\u00e1ximo)" },
+    // Comprobado contra Finviz: a5h significa "5% o mas POR ENCIMA del minimo de
+    // 52 semanas", NO "cerca del maximo". El dato "52W Low" de la ficha llega
+    // como "48.93 72.74%" y aNumero() se queda con el porcentaje (2o numero).
+    "ta_highlow52w_a5h":      { finviz: "52W Low",       op: ">",  valor: 5,     texto: "> 5% (a 5% o m\u00e1s del m\u00ednimo)" },
     "ta_perf2_26wup":         { finviz: "Perf Half Y",   op: ">",  valor: 0,     texto: "> 0%" },
     "ta_perf_3yup":           { finviz: "Perf 3Y",       op: ">",  valor: 0,     texto: "> 0%" }
 };
@@ -73,6 +79,7 @@ const ORDEN = [
     "fa_pe_u30", "fa_fpe_u20", "fa_ps_o2", "fa_evsales_u6",
     "fa_grossmargin_o10", "fa_opermargin_o5",
     "fa_curratio_o1", "fa_debteq_u1", "fa_ltdebteq_u1",
+    "fa_epsyoyttm_pos",
     "sh_instown_o30", "sh_float_o1", "sh_short_u10", "sh_relvol_o0.5",
     "ta_averagetruerange_o1", "ta_rsi_nos40", "ta_sma20_pa",
     "ta_highlow52w_a5h", "ta_perf2_26wup", "ta_perf_3yup"
@@ -91,6 +98,8 @@ const ALIAS = {
     "Inst Own": ["Institutional Ownership"],
     "Rel Volume": ["Rel Vol", "Relative Volume"],
     "52W High": ["52-Week High"],
+    "52W Low": ["52-Week Low"],
+    "EPS Y/Y TTM": ["EPS growth TTM", "EPS Y/Y", "EPS TTM Y/Y"],
     "EV/Sales": ["EV / Sales"],
     "Forward P/E": ["Fwd P/E"],
     "LT Debt/Eq": ["LT Debt/Equity"],
