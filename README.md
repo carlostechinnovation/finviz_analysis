@@ -33,19 +33,26 @@ Al final muestra un resumen (`N CUMPLE - N INCUMPLE - N N/A`) y un log con el de
 
 - **Cumplimiento**: si comparas una empresa que **sí** aparece en los resultados del screener en Finviz, la tabla debe salir **toda verde**.
 - **Incumplimiento**: si coges una empresa al azar que **no** aparece, debe tener al menos un criterio en **rojo** (`INCUMPLE`).
+- **Tests unitarios de la lógica pura** (parseo, comparación de filtros, cálculo de dilución): `npm test` (usa el test runner incorporado de Node, `node --test`, sin dependencias). No hacen red ni DOM; cubren `docs/logica.js`, incluido el caso real de `BFRI` (ver [§7.4](#74-alerta-de-dilución-real-sec-edgar)).
 
 ## 4. Estructura del repositorio
 
 ```
 docs/                            <- raíz publicada en GitHub Pages
 ├── index.html                   formulario + tabla de resultados
-├── app.js                       toda la lógica (filtros, descarga, parseo, comparación)
+├── logica.js                    lógica pura: filtros, parseo, cálculo de dilución (sin DOM ni red)
+├── app.js                       DOM, descarga (fetch a los proxies) y orquestación
 ├── style.css                    estilos (incluye los colores ok / nok / na)
 ├── urls_screeners_finviz.csv    screeners predefinidos   (SCREENER|URL)
 └── descripcion_filtros.csv      glosario de campos Finviz (FILTRO|DESCRIPCION)
+tests/
+└── logica.test.js               tests unitarios de docs/logica.js (node --test)
+package.json                     solo para poder correr "npm test" (sin dependencias)
 ```
 
 Los dos CSV usan **`|` como separador** (no coma) y tienen una línea de cabecera.
+
+`logica.js` se carga en `index.html` **antes** que `app.js` (variables globales compartidas, sin módulos ni bundler) y además expone sus funciones vía `module.exports` para poder testearlas con Node — ese `if (typeof module !== "undefined")` no afecta al navegador, donde `module` no existe.
 
 ## 5. Arquitectura
 
@@ -58,7 +65,7 @@ navegador  ──fetch──>  https://r.jina.ai/https://finviz.com/quote.ashx?t
                                    con cabeceras CORS abiertas
 ```
 
-Detalles relevantes de [docs/app.js](docs/app.js):
+Detalles relevantes de [docs/app.js](docs/app.js) y [docs/logica.js](docs/logica.js):
 
 - **Por qué un proxy**: GitHub Pages no puede llamar a `finviz.com` directamente por CORS. Se usa `r.jina.ai`, que renderiza la página en su servidor y la devuelve con CORS abierto. Una sola llamada, sin reintentos en paralelo, con **timeout de 20 s**.
 - **Parseo**: se buscan pares `Clave**Valor**` en todo el texto (no línea a línea, porque el proxy a veces junta todos los campos en una sola línea). Se descarta la descarga si se reconocen menos de **8 campos** conocidos.
@@ -200,13 +207,42 @@ Alternativas valoradas, por si quieres endurecerlo (cifras sobre las 15 empresas
 
 Se eligió la versión suave (`fa_epsyoyttm_pos`) para no expulsar negocios cíclicos sanos por un mal tramo de 3-5 años.
 
+#### El proxy no es suficiente: caso `BFRI`
+
+El BPA creciente falla cuando una empresa con pérdidas las va reduciendo a la vez que dispara la emisión de acciones: el BPA mejora (menos pérdida por acción) aunque el número de acciones se dispare. Verificado con `BFRI` (Biofrontera Inc.): en Finviz muestra `EPS Y/Y TTM: +73,13 %` — pasa el filtro `fa_epsyoyttm_pos` sin problema — pero sus acciones en circulación subieron de 10.138.567 (30-jun-2025) a 14.206.126 (30-jun-2026), un **+40,1 % en un año**, según los informes 10-Q/10-K que la propia empresa presenta a la SEC.
+
+Por eso la comparación ya no depende solo de Finviz para esto: además consulta el histórico real de acciones en circulación en **SEC EDGAR** (`data.sec.gov`, la API XBRL oficial de la SEC) y, si el aumento en ~12 meses supera el 20 %, muestra un **aviso rojo de "DESCARTAR"** en pantalla, se cumplan o no el resto de filtros del screener. Detalle técnico en [§7.4](#74-alerta-de-dilución-real-sec-edgar).
+
+---
+
+### 7.4. Alerta de dilución real (SEC EDGAR)
+
+Independiente del screener y de sus filtros, cada comparación hace además esto:
+
+1. **Resuelve el ticker a su CIK** (identificador de la SEC) descargando `https://www.sec.gov/files/company_tickers.json` (una vez por sesión, cacheado en memoria).
+2. **Descarga el histórico de acciones en circulación** de esa empresa desde la API XBRL de la SEC: `https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/{etiqueta}.json`, probando en orden `us-gaap:CommonStockSharesOutstanding`, `dei:EntityCommonStockSharesOutstanding` y `us-gaap:CommonStockSharesIssued` (no todas las empresas informan bajo la misma etiqueta contable).
+3. **Compara el último dato disponible con el más cercano a "hace 1 año"** (margen de ±120 días, porque los informes son trimestrales).
+4. Si el número de acciones subió **20 % o más** en esa ventana, pinta un recuadro rojo fijo (`#alertaDilucion` en `index.html`) con el detalle de fechas y cifras, y añade `⚠ DESCARTAR por dilución fuerte` al resumen final, aunque el resto de filtros del screener estén en `CUMPLE`.
+
+Verificado con datos reales de `BFRI` (CIK `1858685`):
+
+| Fecha (fin de periodo) | Acciones en circulación | Informe |
+|---|---|---|
+| 2025-06-30 | 10.138.567 | 10-Q |
+| 2026-06-30 | 14.206.126 | 10-Q |
+
+`(14.206.126 - 10.138.567) / 10.138.567 = +40,1 %` → supera el umbral del 20 % → **se dispara el aviso rojo**, pese a que Finviz muestra `EPS Y/Y TTM: +73,13 %` (positivo, pasa el filtro anti-dilución del screener).
+
+**Limitación conocida de esta alerta:** los datos "as filed" de SEC EDGAR no se reexpresan retroactivamente tras un *split*. Un split de acciones (que no diluye realmente, solo reparte el mismo valor en más títulos) puede disparar esta alerta como falso positivo. Tampoco cubre empresas que no presentan ante la SEC (extranjeras que cotizan como ADR sin 10-K/10-Q, por ejemplo), en cuyo caso simplemente no se muestra ninguna alerta (no se asume nada).
+
 ---
 
 ## 8. Limitaciones conocidas
 
-- **Solo se soportan los 21 filtros del diccionario `FILTROS`** de `app.js`. Si pegas una URL con otros códigos, esas filas salen como `N/A` con el texto `(filtro no soportado)`.
+- **Solo se soportan los 21 filtros del diccionario `FILTROS`** de `logica.js`. Si pegas una URL con otros códigos, esas filas salen como `N/A` con el texto `(filtro no soportado)`.
 - **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
 - **Dependencia de un proxy de terceros.** Si `r.jina.ai` está caído, saturado o cambia el formato de salida, la descarga falla. No hay reintentos.
+- **La alerta de dilución (§7.4) depende de SEC EDGAR**, así que solo funciona para empresas que presentan 10-K/10-Q ante la SEC (no ADRs extranjeros sin esa obligación) y no distingue una dilución real de un *split* de acciones.
 - **El parseo es frágil por naturaleza.** Se basa en el texto renderizado de la ficha de Finviz; cualquier cambio de maquetación puede romperlo. El umbral de 8 campos reconocidos existe precisamente para detectarlo y avisar en vez de dar resultados falsos.
 - **Sin caché ni histórico.** Cada comparación vuelve a descargar la ficha.
 - **Uso de Finviz.** Respeta los términos de uso de finviz.com: esta herramienta hace una única petición manual por consulta y no automatiza extracciones masivas.

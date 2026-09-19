@@ -1,0 +1,8 @@
+{
+  "name": "finviz-analysis",
+  "private": true,
+  "description": "Comparador estatico empresa vs screener de Finviz (sin backend). Este package.json existe solo para poder correr los tests unitarios con npm test.",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}
