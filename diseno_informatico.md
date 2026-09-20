@@ -55,9 +55,9 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
    2. `compruebaDilucion(ticker)`: resuelve el CIK del ticker en SEC EDGAR (`resuelveCIK`, con caché en memoria del fichero completo ticker→CIK), descarga el histórico de acciones en circulación (`descargaHistoricoShares`, probando varias etiquetas XBRL) y calcula la variación en ~1 año (`docs/logica.js:calculaDilucion`).
    3. Ninguna de las dos llamadas lanza excepción hacia arriba: un fallo en un ticker (Finviz caído, ticker no listado en SEC, etc.) se registra en el log y ese ticker queda marcado como "sin datos" para Finviz y/o sin alerta de dilución, **sin bloquear a los demás tickers**.
 5. `pintaMultiTicker()` construye la tabla:
-   - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Valor Empresa | Descripción` + una columna por ticker.
-   - Primera fila (`pintaFilaDilucion`): aviso de dilución por ticker (celda roja `.dilucion-alerta` con el texto, o vacía).
-   - Una fila por cada filtro del screener, con el valor de cada empresa en "Valor Empresa" (unidas con ` | `) y el veredicto `CUMPLE` / `INCUMPLE` / `N/A` en la columna de cada ticker.
+   - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
+   - Primera fila (`pintaFilaDilucion`): el porcentaje de variación de acciones en circulación de cada ticker, dentro de su propia celda — verde (`.ok`) si está por debajo del umbral, rojo (`.dilucion-alerta`) con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, naranja (`.na`) si no hay datos en SEC EDGAR (`N/D`).
+   - Una fila por cada filtro del screener: el valor de la empresa va **dentro** de la celda de su ticker (no en una columna aparte), y el color de esa celda (verde `.ok` / rojo `.nok` / naranja `.na`) es lo que indica `CUMPLE` / `INCUMPLE` / `N/A`.
 6. El resumen final (`#resumen`) muestra una línea por ticker con sus contadores y, si aplica, el aviso de descarte por dilución.
 
 No hay ejecución programada ni tareas en segundo plano: todo ocurre **bajo demanda**, al pulsar "Comparar". No hay, por tanto, planificación temporal que documentar.

@@ -243,9 +243,11 @@ async function loadDescriptions() {
 
 /* -------------------------------------------------------------------------
    COMPARACION (multi-ticker)
-   Columnas fijas: Filtro | Condicion Screener | Valor Empresa | Descripcion
-   seguidas de una columna por cada ticker (CUMPLE / INCUMPLE / N/A, o el
-   aviso de dilucion en la primera fila).
+   Columnas fijas: Filtro | Condicion Screener | Descripcion, seguidas de una
+   columna por cada ticker. El valor de la empresa va DENTRO de su celda
+   (no en una columna aparte); el color de la celda (verde/rojo/naranja) es
+   lo que indica CUMPLE / INCUMPLE / N-A, o el aviso de dilucion en la
+   primera fila.
    ------------------------------------------------------------------------- */
 function textoPlano(s) {
     const d = document.createElement("div");
@@ -267,37 +269,34 @@ function leeTickers() {
 }
 
 function pintaCabecera(tickers) {
-    const th = ["Filtro", "Condici\u00f3n Screener", "Valor Empresa", "Descripci\u00f3n"]
+    const th = ["Filtro", "Condici\u00f3n Screener", "Descripci\u00f3n"]
         .map(t => "<th>" + textoPlano(t) + "</th>")
         .concat(tickers.map(t => "<th>" + textoPlano(t) + "</th>"))
         .join("");
     resultsThead.innerHTML = "<tr>" + th + "</tr>";
 }
 
-// Primera fila de la tabla: aviso de dilucion (independiente del screener),
-// una celda roja por ticker si supera el umbral, vacia si no.
+// Primera fila de la tabla: aviso de dilucion (independiente del screener).
+// Cada celda muestra el porcentaje de esa empresa: verde si esta por debajo
+// del umbral, rojo con el aviso si lo supera, naranja si no hay datos.
 function pintaFilaDilucion(tickers, resultadosPorTicker) {
-    const valorEmpresa = tickers
-        .map(t => {
-            const d = resultadosPorTicker[t].dilucion;
-            return t + ": " + (d ? ((d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%") : "N/D");
-        })
-        .join(" | ");
-
     const celdasTicker = tickers.map(t => {
         const d = resultadosPorTicker[t].dilucion;
-        const activa = d && d.pct >= UMBRAL_DILUCION_PCT;
-        const texto = activa
-            ? "ALERTA POR DILUCI\u00d3N: +" + d.pct.toFixed(1) + "% en 1 a\u00f1o"
-            : "";
-        return '<td class="' + (activa ? "dilucion-alerta" : "") + '">' + textoPlano(texto) + "</td>";
+        if (!d) {
+            return '<td class="na">N/D</td>';
+        }
+        const pctTexto = (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
+        if (d.pct >= UMBRAL_DILUCION_PCT) {
+            return '<td class="dilucion-alerta">' +
+                textoPlano("ALERTA POR DILUCI\u00d3N: " + pctTexto + " en 1 a\u00f1o") + "</td>";
+        }
+        return '<td class="ok">' + textoPlano(pctTexto) + "</td>";
     }).join("");
 
     const tr = document.createElement("tr");
     tr.innerHTML =
         "<td>" + textoPlano("Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)") + "</td>" +
         "<td>" + textoPlano("< " + UMBRAL_DILUCION_PCT + "% de aumento") + "</td>" +
-        "<td>" + textoPlano(valorEmpresa) + "</td>" +
         "<td>" + textoPlano(
             "Aumento de acciones en circulaci\u00f3n en ~1 a\u00f1o, seg\u00fan SEC EDGAR " +
             "(no Finviz). N/D = sin datos suficientes en SEC EDGAR. Ver README \u00a77.4."
@@ -326,7 +325,7 @@ async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
 
         const porTicker = tickers.map(t => {
             const datos = resultadosPorTicker[t].datos;
-            if (!datos) return { texto: t + ": (sin datos)", estado: "na" };
+            if (!datos) return { texto: "(sin datos)", estado: "na" };
 
             const bruto = def ? buscaValor(datos, etiqueta) : undefined;
             const mostrado = (bruto === undefined || bruto === "") ? "N/A" : bruto;
@@ -339,7 +338,7 @@ async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
                     if (r !== null) estado = r ? "ok" : "nok";
                 }
             }
-            return { texto: t + ": " + mostrado, estado: estado };
+            return { texto: String(mostrado), estado: estado };
         });
 
         tickers.forEach((t, i) => {
@@ -351,15 +350,13 @@ async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
         });
 
         const celdasTicker = porTicker.map(v => {
-            const texto = v.estado === "ok" ? "CUMPLE" : (v.estado === "nok" ? "INCUMPLE" : "N/A");
-            return '<td class="' + v.estado + '">' + texto + "</td>";
+            return '<td class="' + v.estado + '">' + textoPlano(v.texto) + "</td>";
         }).join("");
 
         const tr = document.createElement("tr");
         tr.innerHTML =
             "<td>" + textoPlano(etiqueta) + "</td>" +
             "<td>" + textoPlano(condicion) + "</td>" +
-            "<td>" + textoPlano(porTicker.map(v => v.texto).join(" | ")) + "</td>" +
             "<td>" + textoPlano(buscaDescripcion(descripciones, etiqueta)) + "</td>" +
             celdasTicker;
         resultsTable.appendChild(tr);
