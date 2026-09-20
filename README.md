@@ -1,81 +1,20 @@
-# FINVIZ — Comparador de una EMPRESA contra los criterios de un SCREENER
+# FINVIZ — Comparador de empresas contra los criterios de un SCREENER
 
-Aplicación web estática (HTML + JavaScript, sin backend) que coge **un ticker** y **la URL de un screener de Finviz**, descarga la ficha de la empresa y muestra, criterio a criterio, **cuáles cumple y cuáles no**.
+Aplicación web estática (HTML + JavaScript, sin backend) que coge **uno o varios tickers** y **la URL de un screener de Finviz**, descarga la ficha de cada empresa y muestra, criterio a criterio, **cuáles cumple y cuáles no** — con una columna por empresa para poder compararlas de un vistazo. Incluye además una alerta independiente de **dilución fuerte** (aumento agresivo de acciones en circulación) basada en datos oficiales de SEC EDGAR, no solo en Finviz.
 
-> ⚠️ **Proyecto educativo.** No es asesoramiento financiero ni una recomendación de inversión. Los datos proceden de [finviz.com](https://finviz.com) a través de un proxy público de terceros y pueden estar incompletos, retrasados o ser erróneos. Úsalo para aprender cómo funcionan los filtros de un screener, no para operar con dinero real.
+> ⚠️ **Proyecto educativo.** No es asesoramiento financiero ni una recomendación de inversión. Los datos proceden de [finviz.com](https://finviz.com) y de [SEC EDGAR](https://www.sec.gov/edgar) a través de proxies públicos de terceros y pueden estar incompletos, retrasados o ser erróneos. Úsalo para aprender cómo funcionan los filtros de un screener, no para operar con dinero real.
 
----
+## Documentación
 
-## 1. Motivo
+- **[diseno_funcional.md](diseno_funcional.md)** — qué problema resuelve, cómo se interpretan los filtros del screener de ejemplo y por qué la dilución de acciones necesita una comprobación aparte (con referencias).
+- **[diseno_informatico.md](diseno_informatico.md)** — arquitectura, flujo de ejecución, estructura de ficheros, cómo correr la app y los tests en local.
 
-Un usuario crea un screener con unos criterios que aparentan ser interesantes. Otro día se pregunta:
+## Uso rápido
 
-> *¿Por qué la empresa XXX, que aparenta ser buena, no aparece en los resultados de mi screener?*
-
-Finviz te dice **qué** empresas pasan el filtro, pero no **por qué** una concreta se queda fuera. Esta herramienta responde justo a eso: pone en una tabla cada criterio del screener frente al valor real de la empresa.
-
-## 2. Qué hace
-
-1. Lee un **ticker** (por ejemplo `AAPL`) y eliges un **screener** (de los predefinidos en un CSV) o pegas una **URL propia** de Finviz.
-2. La app extrae los códigos de filtro del parámetro `f=` de esa URL.
-3. Descarga la ficha `finviz.com/quote.ashx?t=TICKER` y extrae sus propiedades.
-4. Compara cada criterio y pinta la tabla:
-
-| Color | Estado | Significado |
-|---|---|---|
-| 🟢 Verde | `CUMPLE` | El valor de la empresa satisface la condición |
-| 🔴 Rojo | `INCUMPLE` | El valor de la empresa no satisface la condición |
-| 🟠 Naranja | `N/A` | El dato no está disponible, o el filtro no está soportado por la app |
-
-Al final muestra un resumen (`N CUMPLE - N INCUMPLE - N N/A`) y un log con el detalle de la descarga.
-
-## 3. Cómo probar que funciona
-
-- **Cumplimiento**: si comparas una empresa que **sí** aparece en los resultados del screener en Finviz, la tabla debe salir **toda verde**.
-- **Incumplimiento**: si coges una empresa al azar que **no** aparece, debe tener al menos un criterio en **rojo** (`INCUMPLE`).
-- **Tests unitarios de la lógica pura** (parseo, comparación de filtros, cálculo de dilución): `npm test` (usa el test runner incorporado de Node, `node --test`, sin dependencias). No hacen red ni DOM; cubren `docs/logica.js`, incluido el caso real de `BFRI` (ver [§7.4](#74-alerta-de-dilución-real-sec-edgar)).
-
-## 4. Estructura del repositorio
-
-```
-docs/                            <- raíz publicada en GitHub Pages
-├── index.html                   formulario + tabla de resultados
-├── logica.js                    lógica pura: filtros, parseo, cálculo de dilución (sin DOM ni red)
-├── app.js                       DOM, descarga (fetch a los proxies) y orquestación
-├── style.css                    estilos (incluye los colores ok / nok / na)
-├── urls_screeners_finviz.csv    screeners predefinidos   (SCREENER|URL)
-└── descripcion_filtros.csv      glosario de campos Finviz (FILTRO|DESCRIPCION)
-tests/
-└── logica.test.js               tests unitarios de docs/logica.js (node --test)
-package.json                     solo para poder correr "npm test" (sin dependencias)
-```
-
-Los dos CSV usan **`|` como separador** (no coma) y tienen una línea de cabecera.
-
-`logica.js` se carga en `index.html` **antes** que `app.js` (variables globales compartidas, sin módulos ni bundler) y además expone sus funciones vía `module.exports` para poder testearlas con Node — ese `if (typeof module !== "undefined")` no afecta al navegador, donde `module` no existe.
-
-## 5. Arquitectura
-
-Todo se ejecuta **en el navegador**; no hay servidor propio ni claves de API.
-
-```
-navegador  ──fetch──>  https://r.jina.ai/https://finviz.com/quote.ashx?t=TICKER
-                              │
-                              └──> devuelve la página renderizada como texto/markdown
-                                   con cabeceras CORS abiertas
-```
-
-Detalles relevantes de [docs/app.js](docs/app.js) y [docs/logica.js](docs/logica.js):
-
-- **Por qué un proxy**: GitHub Pages no puede llamar a `finviz.com` directamente por CORS. Se usa `r.jina.ai`, que renderiza la página en su servidor y la devuelve con CORS abierto. Una sola llamada, sin reintentos en paralelo, con **timeout de 20 s**.
-- **Parseo**: se buscan pares `Clave**Valor**` en todo el texto (no línea a línea, porque el proxy a veces junta todos los campos en una sola línea). Se descarta la descarga si se reconocen menos de **8 campos** conocidos.
-- **Alias**: el diccionario `ALIAS` cubre las distintas etiquetas que Finviz ha usado con el tiempo (`Oper. Margin` / `Operating Margin`, `Shs Float` / `Float`, etc.).
-- **Normalización numérica**: `aNumero()` admite `1,234.5`, `12.34%`, `+3.2%`, sufijos `K/M/B/T` y campos combinados tipo `0.61% / 1.20`.
-- **Codificación**: el fichero se mantiene en **ASCII puro** a propósito; los acentos van como escapes `\uXXXX` para que ningún editor lo corrompa al guardarlo en otra codificación.
-
-## 6. Uso
-
-En local basta con servir la carpeta `docs/` (abrir `index.html` como `file://` falla al cargar los CSV):
+1. Abre `docs/index.html` (servido, no como `file://`; ver [diseno_informatico.md](diseno_informatico.md)) o la versión publicada en GitHub Pages.
+2. Escribe uno o varios tickers separados por comas (p. ej. `AAPL, MSFT, GOOG`).
+3. Elige un screener predefinido o pega la URL de uno tuyo de Finviz.
+4. Pulsa **Comparar**.
 
 ```bash
 cd docs
@@ -83,166 +22,10 @@ python -m http.server 8000
 # http://localhost:8000
 ```
 
-O usar directamente la versión publicada en GitHub Pages del repositorio.
+## Tests
 
-### Añadir un screener nuevo
-
-Añade una línea a [docs/urls_screeners_finviz.csv](docs/urls_screeners_finviz.csv):
-
-```
-nombre_del_screener|https://finviz.com/screener.ashx?v=111&f=cap_midover,fa_pe_u20
+```bash
+npm test
 ```
 
-La app solo mira el parámetro `f=` de la URL; el resto (`v`, `o`, `p`, `ft`) se ignora.
-
----
-
-## 7. Análisis del screener predefinido: `solventes`
-
-URL completa (decodificada):
-
-```
-https://finviz.com/screener.ashx
-  ?v=211            vista "Charts" (gráficos)
-  &p=w              velas semanales
-  &ft=4             pestaña de filtros = "All" (solo afecta a la interfaz)
-  &o=-instown       ordenar por propiedad institucional, descendente
-  &f=<21 filtros>
-```
-
-### 7.1. Los 21 filtros, uno a uno
-
-**Descriptivos**
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `cap_largeunder` | Market Cap | < 200.000 M$ | Todo menos las mega-caps: deja fuera a Apple, Microsoft, Nvidia… |
-
-**Fundamentales — valoración**
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `fa_pe_u30` | P/E | < 30 | No pagar de más por los beneficios actuales |
-| `fa_fpe_u20` | Forward P/E | < 20 | Que los beneficios *estimados* también salgan baratos |
-| `fa_ps_o2` | P/S | **> 2** | ⚠️ Es un **mínimo**, no un máximo: descarta negocios de mucha venta y poco margen |
-| `fa_evsales_u6` | EV/Sales | < 6 | Techo a lo anterior: ni barato de más ni caro de más |
-
-**Fundamentales — calidad del negocio**
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `fa_grossmargin_o10` | Gross Margin | > 10 % | Margen bruto mínimo |
-| `fa_opermargin_o5` | Oper. Margin | > 5 % | Que el negocio sea rentable a nivel operativo |
-
-**Fundamentales — solvencia** (de aquí viene el nombre del screener)
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `fa_curratio_o1` | Current Ratio | > 1 | El activo corriente cubre el pasivo corriente |
-| `fa_debteq_u1` | Debt/Eq | < 1 | Deuda total menor que los fondos propios |
-| `fa_ltdebteq_u1` | LT Debt/Eq | < 1 | Lo mismo para la deuda a largo plazo |
-
-**Crecimiento y dilución**
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `fa_epsyoyttm_pos` | EPS Y/Y TTM | Positivo | Que el **beneficio por acción** crezca, no solo los ingresos totales. Ver [§7.3](#73-el-filtro-anti-dilución) |
-
-**Propiedad y liquidez de mercado**
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `sh_instown_o30` | Inst Own | > 30 % | Respaldo de fondos institucionales |
-| `sh_float_o1` | Shs Float | > 1 M acciones | Que haya papel suficiente circulando |
-| `sh_short_u10` | Short Float | < 10 % | Evitar valores muy atacados por bajistas |
-| `sh_relvol_o0.5` | Rel Volume | > 0,5 | Que hoy se negocie con actividad normal |
-
-**Técnicos — tendencia y momento**
-
-| Código | Campo Finviz | Condición | Qué busca |
-|---|---|---|---|
-| `ta_averagetruerange_o1` | ATR (14) | > 1 | Recorrido diario en $ suficiente |
-| `ta_rsi_nos40` | RSI (14) | > 40 (no sobrevendido) | Descartar valores en caída libre |
-| `ta_sma20_pa` | SMA20 | Precio **por encima** de la media de 20 días | Tendencia corta alcista |
-| `ta_highlow52w_a5h` | 52W Low | **5 % o más por encima del mínimo de 52 semanas** | Que no esté hundido en mínimos anuales |
-| `ta_perf2_26wup` | Perf Half Y | Positiva | Va bien a medio plazo (26 semanas) |
-| `ta_perf_3yup` | Perf 3Y | Positiva | Y también a 3 años |
-
-### 7.2. Qué tipo de empresa sale de aquí
-
-Los filtros se refuerzan entre sí y el perfil resultante es bastante estrecho:
-
-- **Margen neto implícito alto.** Exigir `P/S > 2` y a la vez `P/E < 30` obliga a un margen neto de aproximadamente `2 / 30 ≈ 6,7 %` como mínimo. Esto elimina de golpe distribución, retail, aerolíneas y cualquier negocio de volumen con margen fino.
-- **Balance sano.** Deuda inferior a fondos propios (total y a largo) más liquidez corriente positiva: fuera empresas muy apalancadas, utilities y buena parte del inmobiliario.
-- **Rentable ya, no promesa futura.** `Forward P/E < 20` exige beneficios estimados positivos: fuera biotecnológicas sin ingresos y growth sin beneficios.
-- **Tamaño medio-grande pero no gigante.** Por debajo de 200.000 M$ y con respaldo institucional > 30 %: fuera micro-caps y chicharros.
-- **En tendencia alcista, no en rebote desde mínimos.** Por encima de la SMA20, RSI > 40, positiva a 6 meses y a 3 años, y al menos un 5 % por encima del mínimo anual.
-
-**El resultado práctico** (consulta de septiembre de 2026: **13 empresas**) se concentra en dos bloques muy reconocibles:
-
-- **Transporte marítimo y energía**: `FRO`, `STNG`, `INSW`, `TNK`, `TRMD`, `LPG`, `COP`, `EOG`.
-- **Semiconductores**: `NXPI`, `QRVO`, `TEL`.
-- Y algún industrial o farma suelto: `VMI`, `NBIX`.
-
-Es decir: **negocios cíclicos maduros, con caja, poca deuda y en la parte buena de su ciclo**. La combinación "márgenes altos + múltiplo bajo + tendencia alcista" es exactamente el perfil de un sector cíclico en pleno pico de beneficios — lo cual es también su principal riesgo: un múltiplo bajo en un cíclico en máximo de ciclo suele ser una *trampa de valor*.
-
-### 7.3. El filtro anti-dilución
-
-La **dilución del accionista** —emitir acciones nuevas de forma continua— reparte el mismo negocio entre más participaciones: cada acción vale cada vez menos aunque la empresa en conjunto crezca. Es un riesgo que ninguno de los filtros clásicos de valoración detecta.
-
-**Finviz no ofrece un filtro directo de "variación del número de acciones".** Tiene `Shares Outstanding` y `Float`, pero solo como magnitudes absolutas, no como variación en el tiempo. Verificado contra la lista real de filtros del screener.
-
-El proxy nativo que sí funciona es exigir **crecimiento del beneficio por acción (BPA)**, porque es exactamente la magnitud que la dilución destruye:
-
-> Si una empresa emite un 30 % más de acciones y sus beneficios totales solo suben un 10 %, los ingresos y el beneficio agregado crecen, pero el **BPA cae**. El filtro `fa_epsyoyttm_pos` (EPS Y/Y TTM positivo) captura justo ese caso.
-
-Alternativas valoradas, por si quieres endurecerlo (cifras sobre las 15 empresas que daba el screener sin este filtro):
-
-| Filtro | Significado | Empresas resultantes |
-|---|---|---|
-| `fa_epsyoyttm_pos` ← **aplicado** | BPA creciente en los últimos 12 meses | 13 |
-| `fa_eps5years_pos` | BPA creciente en los últimos 5 años | 9 |
-| `fa_eps5years_pos` + `fa_epsyoyttm_pos` | Ambos: dilución histórica **y** reciente | 7 |
-| `fa_eps3years_pos` + `fa_epsyoyttm_pos` | Ventana corta y exigente | 5 |
-
-Se eligió la versión suave (`fa_epsyoyttm_pos`) para no expulsar negocios cíclicos sanos por un mal tramo de 3-5 años.
-
-#### El proxy no es suficiente: caso `BFRI`
-
-El BPA creciente falla cuando una empresa con pérdidas las va reduciendo a la vez que dispara la emisión de acciones: el BPA mejora (menos pérdida por acción) aunque el número de acciones se dispare. Verificado con `BFRI` (Biofrontera Inc.): en Finviz muestra `EPS Y/Y TTM: +73,13 %` — pasa el filtro `fa_epsyoyttm_pos` sin problema — pero sus acciones en circulación subieron de 10.138.567 (30-jun-2025) a 14.206.126 (30-jun-2026), un **+40,1 % en un año**, según los informes 10-Q/10-K que la propia empresa presenta a la SEC.
-
-Por eso la comparación ya no depende solo de Finviz para esto: además consulta el histórico real de acciones en circulación en **SEC EDGAR** (`data.sec.gov`, la API XBRL oficial de la SEC) y, si el aumento en ~12 meses supera el 20 %, muestra un **aviso rojo de "DESCARTAR"** en pantalla, se cumplan o no el resto de filtros del screener. Detalle técnico en [§7.4](#74-alerta-de-dilución-real-sec-edgar).
-
----
-
-### 7.4. Alerta de dilución real (SEC EDGAR)
-
-Independiente del screener y de sus filtros, cada comparación hace además esto:
-
-1. **Resuelve el ticker a su CIK** (identificador de la SEC) descargando `https://www.sec.gov/files/company_tickers.json` (una vez por sesión, cacheado en memoria).
-2. **Descarga el histórico de acciones en circulación** de esa empresa desde la API XBRL de la SEC: `https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/{etiqueta}.json`, probando en orden `us-gaap:CommonStockSharesOutstanding`, `dei:EntityCommonStockSharesOutstanding` y `us-gaap:CommonStockSharesIssued` (no todas las empresas informan bajo la misma etiqueta contable).
-3. **Compara el último dato disponible con el más cercano a "hace 1 año"** (margen de ±120 días, porque los informes son trimestrales).
-4. Si el número de acciones subió **20 % o más** en esa ventana, pinta un recuadro rojo fijo (`#alertaDilucion` en `index.html`) con el detalle de fechas y cifras, y añade `⚠ DESCARTAR por dilución fuerte` al resumen final, aunque el resto de filtros del screener estén en `CUMPLE`.
-
-Verificado con datos reales de `BFRI` (CIK `1858685`):
-
-| Fecha (fin de periodo) | Acciones en circulación | Informe |
-|---|---|---|
-| 2025-06-30 | 10.138.567 | 10-Q |
-| 2026-06-30 | 14.206.126 | 10-Q |
-
-`(14.206.126 - 10.138.567) / 10.138.567 = +40,1 %` → supera el umbral del 20 % → **se dispara el aviso rojo**, pese a que Finviz muestra `EPS Y/Y TTM: +73,13 %` (positivo, pasa el filtro anti-dilución del screener).
-
-**Limitación conocida de esta alerta:** los datos "as filed" de SEC EDGAR no se reexpresan retroactivamente tras un *split*. Un split de acciones (que no diluye realmente, solo reparte el mismo valor en más títulos) puede disparar esta alerta como falso positivo. Tampoco cubre empresas que no presentan ante la SEC (extranjeras que cotizan como ADR sin 10-K/10-Q, por ejemplo), en cuyo caso simplemente no se muestra ninguna alerta (no se asume nada).
-
----
-
-## 8. Limitaciones conocidas
-
-- **Solo se soportan los 21 filtros del diccionario `FILTROS`** de `logica.js`. Si pegas una URL con otros códigos, esas filas salen como `N/A` con el texto `(filtro no soportado)`.
-- **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
-- **Dependencia de un proxy de terceros.** Si `r.jina.ai` está caído, saturado o cambia el formato de salida, la descarga falla. No hay reintentos.
-- **La alerta de dilución (§7.4) depende de SEC EDGAR**, así que solo funciona para empresas que presentan 10-K/10-Q ante la SEC (no ADRs extranjeros sin esa obligación) y no distingue una dilución real de un *split* de acciones.
-- **El parseo es frágil por naturaleza.** Se basa en el texto renderizado de la ficha de Finviz; cualquier cambio de maquetación puede romperlo. El umbral de 8 campos reconocidos existe precisamente para detectarlo y avisar en vez de dar resultados falsos.
-- **Sin caché ni histórico.** Cada comparación vuelve a descargar la ficha.
-- **Uso de Finviz.** Respeta los términos de uso de finviz.com: esta herramienta hace una única petición manual por consulta y no automatiza extracciones masivas.
+Tests unitarios (`node --test`, sin dependencias) de la lógica pura en [docs/logica.js](docs/logica.js), incluido el caso real de dilución de `BFRI` documentado en [diseno_funcional.md](diseno_funcional.md).

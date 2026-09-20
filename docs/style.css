@@ -8,10 +8,14 @@ input, select, button {
   padding: 5px;
 }
 
+.tabla-scroll {
+  overflow-x: auto;
+  margin-top: 20px;
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
-  margin-top: 20px;
 }
 
 table, th, td {
@@ -54,19 +58,11 @@ th {
 #resumen {
   margin-top: 15px;
   font-weight: bold;
+  white-space: pre-line;
 }
 
-#alertaDilucion {
-  display: none;
-  margin-top: 10px;
-  padding: 10px;
-  border-radius: 4px;
-  font-weight: bold;
-}
-
-#alertaDilucion.activa {
-  display: block;
+.dilucion-alerta {
   background-color: #f7c5c5;
   color: #721c24;
-  border: 2px solid #721c24;
+  font-weight: bold;
 }

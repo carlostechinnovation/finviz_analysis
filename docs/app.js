@@ -1,6 +1,9 @@
 /* =========================================================================
-   Comparador empresa vs screener (Finviz)
+   Comparador empresas vs screener (Finviz)
    100% cliente: no hay backend. Solo HTML + JS estatico en GitHub Pages.
+
+   Admite varios tickers a la vez (separados por comas): cada ticker es una
+   columna de la tabla de resultados.
 
    La logica pura (filtros, parseo, calculo de dilucion) vive en logica.js,
    cargado antes que este fichero, para poder testearla con Node sin DOM.
@@ -15,9 +18,10 @@ const tickerInput = document.getElementById("ticker");
 const screenerSelect = document.getElementById("screenerSelect");
 const customURLInput = document.getElementById("customURL");
 const compareBtn = document.getElementById("compareBtn");
-const resultsTable = document.getElementById("resultsTable").querySelector("tbody");
+const resultsTableEl = document.getElementById("resultsTable");
+const resultsThead = resultsTableEl.querySelector("thead");
+const resultsTable = resultsTableEl.querySelector("tbody");
 const resumenDiv = document.getElementById("resumen");
-const alertaDilucionDiv = document.getElementById("alertaDilucion");
 const log = document.getElementById("log");
 
 const SCREENER_POR_DEFECTO = "solventes";
@@ -39,9 +43,8 @@ function logMsg(msg) {
    DESCARGA VIA PROXY CORS
    GitHub Pages no puede llamar a finviz.com directamente (CORS) y no hay
    backend propio, asi que se usa un unico proxy publico con una unica
-   llamada web (sin reintentos en paralelo). r.jina.ai renderiza la pagina
-   en su servidor y la devuelve como texto/markdown con cabeceras CORS
-   abiertas.
+   llamada web por ticker (sin reintentos). r.jina.ai renderiza la pagina en
+   su servidor y la devuelve como texto/markdown con cabeceras CORS abiertas.
    ------------------------------------------------------------------------- */
 function construyeURLProxy(objetivo) {
     return "https://r.jina.ai/" + objetivo;
@@ -69,29 +72,29 @@ async function descargaDatos(ticker) {
         resp = await fetchConTimeout(url, TIMEOUT_MS);
     } catch (e) {
         const motivo = e.name === "AbortError" ? "timeout " + (TIMEOUT_MS / 1000) + "s" : e.message;
-        logMsg("  [FALLO] " + motivo);
+        logMsg("  [" + ticker + "] [FALLO] " + motivo);
         return null;
     }
 
     if (!resp.ok) {
-        logMsg("  [FALLO] HTTP " + resp.status);
+        logMsg("  [" + ticker + "] [FALLO] HTTP " + resp.status);
         return null;
     }
 
     const cuerpo = await resp.text();
     if (!cuerpo || cuerpo.length < 200) {
-        logMsg("  [FALLO] respuesta vacia");
+        logMsg("  [" + ticker + "] [FALLO] respuesta vacia");
         return null;
     }
 
     const datos = extraeDatosMarkdown(cuerpo);
     const validos = cuentaConocidos(datos);
     if (validos < MIN_CAMPOS_VALIDOS) {
-        logMsg("  [FALLO] solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
+        logMsg("  [" + ticker + "] [FALLO] solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
         return null;
     }
 
-    logMsg("  [OK] " + validos + " campos reconocidos");
+    logMsg("  [" + ticker + "] [OK] " + validos + " campos reconocidos");
     return { datos: datos, validos: validos };
 }
 
@@ -151,25 +154,25 @@ async function compruebaDilucion(ticker) {
     try {
         const cik = await resuelveCIK(ticker);
         if (!cik) {
-            logMsg("Dilucion: ticker no encontrado en el mapeo CIK de SEC EDGAR.");
+            logMsg("  [" + ticker + "] Dilucion: ticker no encontrado en el mapeo CIK de SEC EDGAR.");
             return null;
         }
         const puntos = await descargaHistoricoShares(cik);
         if (!puntos) {
-            logMsg("Dilucion: SEC EDGAR no tiene historico de acciones en circulacion para este valor.");
+            logMsg("  [" + ticker + "] Dilucion: SEC EDGAR no tiene historico de acciones en circulacion.");
             return null;
         }
         const r = calculaDilucion(puntos);
         if (!r) {
-            logMsg("Dilucion: no hay dos periodos separados ~1 anio para comparar.");
+            logMsg("  [" + ticker + "] Dilucion: no hay dos periodos separados ~1 anio para comparar.");
             return null;
         }
-        logMsg("Dilucion: acciones en circulacion " + r.anterior.val.toLocaleString() + " (" + r.anterior.end +
-               ") -> " + r.actual.val.toLocaleString() + " (" + r.actual.end + ") = " +
+        logMsg("  [" + ticker + "] Dilucion: acciones en circulacion " + r.anterior.val.toLocaleString() +
+               " (" + r.anterior.end + ") -> " + r.actual.val.toLocaleString() + " (" + r.actual.end + ") = " +
                (r.pct >= 0 ? "+" : "") + r.pct.toFixed(1) + "%");
         return r;
     } catch (e) {
-        logMsg("Dilucion: error inesperado (" + e.message + ")");
+        logMsg("  [" + ticker + "] Dilucion: error inesperado (" + e.message + ")");
         return null;
     }
 }
@@ -239,7 +242,10 @@ async function loadDescriptions() {
 }
 
 /* -------------------------------------------------------------------------
-   COMPARACION
+   COMPARACION (multi-ticker)
+   Columnas fijas: Filtro | Condicion Screener | Valor Empresa | Descripcion
+   seguidas de una columna por cada ticker (CUMPLE / INCUMPLE / N/A, o el
+   aviso de dilucion en la primera fila).
    ------------------------------------------------------------------------- */
 function textoPlano(s) {
     const d = document.createElement("div");
@@ -247,70 +253,131 @@ function textoPlano(s) {
     return d.innerHTML;
 }
 
-// Pinta (o esconde) el aviso rojo de dilucion fuerte, independiente del
-// screener: una empresa puede cumplir todos los filtros de Finviz y aun asi
-// estar diluyendo agresivamente a sus accionistas.
-function pintaAlertaDilucion(dilucion) {
-    if (!dilucion || dilucion.pct < UMBRAL_DILUCION_PCT) {
-        alertaDilucionDiv.classList.remove("activa");
-        alertaDilucionDiv.textContent = "";
-        return;
+function leeTickers() {
+    const vistos = new Set();
+    const resultado = [];
+    for (const trozo of tickerInput.value.split(",")) {
+        const t = trozo.trim().toUpperCase();
+        if (t && !vistos.has(t)) {
+            vistos.add(t);
+            resultado.push(t);
+        }
     }
-    alertaDilucionDiv.textContent =
-        "\u26a0 ALERTA DILUCI\u00d3N: acciones en circulaci\u00f3n +" + dilucion.pct.toFixed(1) + "% en 1 a\u00f1o " +
-        "(" + dilucion.anterior.val.toLocaleString() + " el " + dilucion.anterior.end + " \u2192 " +
-        dilucion.actual.val.toLocaleString() + " el " + dilucion.actual.end + "). " +
-        "DESCARTAR: aumento fuerte de acciones aunque los beneficios mejoren.";
-    alertaDilucionDiv.classList.add("activa");
+    return resultado;
 }
 
-async function pinta(ticker, filtros, datos, dilucion) {
+function pintaCabecera(tickers) {
+    const th = ["Filtro", "Condici\u00f3n Screener", "Valor Empresa", "Descripci\u00f3n"]
+        .map(t => "<th>" + textoPlano(t) + "</th>")
+        .concat(tickers.map(t => "<th>" + textoPlano(t) + "</th>"))
+        .join("");
+    resultsThead.innerHTML = "<tr>" + th + "</tr>";
+}
+
+// Primera fila de la tabla: aviso de dilucion (independiente del screener),
+// una celda roja por ticker si supera el umbral, vacia si no.
+function pintaFilaDilucion(tickers, resultadosPorTicker) {
+    const valorEmpresa = tickers
+        .map(t => {
+            const d = resultadosPorTicker[t].dilucion;
+            return t + ": " + (d ? ((d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%") : "N/D");
+        })
+        .join(" | ");
+
+    const celdasTicker = tickers.map(t => {
+        const d = resultadosPorTicker[t].dilucion;
+        const activa = d && d.pct >= UMBRAL_DILUCION_PCT;
+        const texto = activa
+            ? "ALERTA POR DILUCI\u00d3N: +" + d.pct.toFixed(1) + "% en 1 a\u00f1o"
+            : "";
+        return '<td class="' + (activa ? "dilucion-alerta" : "") + '">' + textoPlano(texto) + "</td>";
+    }).join("");
+
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+        "<td>" + textoPlano("Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)") + "</td>" +
+        "<td>" + textoPlano("< " + UMBRAL_DILUCION_PCT + "% de aumento") + "</td>" +
+        "<td>" + textoPlano(valorEmpresa) + "</td>" +
+        "<td>" + textoPlano(
+            "Aumento de acciones en circulaci\u00f3n en ~1 a\u00f1o, seg\u00fan SEC EDGAR " +
+            "(no Finviz). N/D = sin datos suficientes en SEC EDGAR. Ver README \u00a77.4."
+        ) + "</td>" +
+        celdasTicker;
+    resultsTable.appendChild(tr);
+}
+
+async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
     const descripciones = await loadDescriptions();
+
+    pintaCabecera(tickers);
+    resultsTable.innerHTML = "";
+    pintaFilaDilucion(tickers, resultadosPorTicker);
 
     const ordenados = ORDEN.filter(c => filtros.includes(c))
         .concat(filtros.filter(c => !ORDEN.includes(c)));
 
-    let ok = 0, nok = 0, na = 0;
+    const contadores = {};
+    for (const t of tickers) contadores[t] = { ok: 0, nok: 0, na: 0 };
 
     for (const codigo of ordenados) {
         const def = FILTROS[codigo];
         const etiqueta = def ? def.finviz : codigo;
         const condicion = def ? def.texto : "(filtro no soportado)";
 
-        const bruto = def ? buscaValor(datos, etiqueta) : undefined;
-        const mostrado = (bruto === undefined || bruto === "") ? "N/A" : bruto;
+        const porTicker = tickers.map(t => {
+            const datos = resultadosPorTicker[t].datos;
+            if (!datos) return { texto: t + ": (sin datos)", estado: "na" };
 
-        let estado = "na";
-        if (def) {
-            const num = aNumero(bruto, def.escala);
-            if (!isNaN(num)) {
-                const r = compara(num, def.op, def.valor);
-                if (r !== null) estado = r ? "ok" : "nok";
+            const bruto = def ? buscaValor(datos, etiqueta) : undefined;
+            const mostrado = (bruto === undefined || bruto === "") ? "N/A" : bruto;
+
+            let estado = "na";
+            if (def) {
+                const num = aNumero(bruto, def.escala);
+                if (!isNaN(num)) {
+                    const r = compara(num, def.op, def.valor);
+                    if (r !== null) estado = r ? "ok" : "nok";
+                }
             }
-        }
+            return { texto: t + ": " + mostrado, estado: estado };
+        });
 
-        if (estado === "ok") ok++;
-        else if (estado === "nok") nok++;
-        else na++;
+        tickers.forEach((t, i) => {
+            if (!resultadosPorTicker[t].datos) return;
+            const estado = porTicker[i].estado;
+            if (estado === "ok") contadores[t].ok++;
+            else if (estado === "nok") contadores[t].nok++;
+            else contadores[t].na++;
+        });
 
-        const etiquetaTexto = estado === "ok" ? "CUMPLE" : (estado === "nok" ? "INCUMPLE" : "N/A");
+        const celdasTicker = porTicker.map(v => {
+            const texto = v.estado === "ok" ? "CUMPLE" : (v.estado === "nok" ? "INCUMPLE" : "N/A");
+            return '<td class="' + v.estado + '">' + texto + "</td>";
+        }).join("");
 
         const tr = document.createElement("tr");
         tr.innerHTML =
             "<td>" + textoPlano(etiqueta) + "</td>" +
             "<td>" + textoPlano(condicion) + "</td>" +
-            "<td>" + textoPlano(mostrado) + "</td>" +
-            '<td class="' + estado + '">' + etiquetaTexto + "</td>" +
-            "<td>" + textoPlano(buscaDescripcion(descripciones, etiqueta)) + "</td>";
+            "<td>" + textoPlano(porTicker.map(v => v.texto).join(" | ")) + "</td>" +
+            "<td>" + textoPlano(buscaDescripcion(descripciones, etiqueta)) + "</td>" +
+            celdasTicker;
         resultsTable.appendChild(tr);
     }
 
-    const veto = dilucion && dilucion.pct >= UMBRAL_DILUCION_PCT;
-    resumenDiv.textContent =
-        ticker + ": " + ok + " CUMPLE - " + nok + " INCUMPLE - " + na + " N/A" +
-        (nok === 0 && na === 0 ? " -> la empresa pasa todos los criterios del screener." : "") +
-        (veto ? " \u26a0 DESCARTAR por diluci\u00f3n fuerte (ver aviso rojo)." : "");
-    logMsg("Comparacion finalizada: " + ok + " OK / " + nok + " NOK / " + na + " N/A");
+    const lineas = tickers.map(t => {
+        if (!resultadosPorTicker[t].datos) {
+            return t + ": sin datos (fall\u00f3 la descarga de Finviz).";
+        }
+        const c = contadores[t];
+        const d = resultadosPorTicker[t].dilucion;
+        const veto = d && d.pct >= UMBRAL_DILUCION_PCT;
+        return t + ": " + c.ok + " CUMPLE - " + c.nok + " INCUMPLE - " + c.na + " N/A" +
+            (c.nok === 0 && c.na === 0 ? " -> pasa todos los criterios del screener." : "") +
+            (veto ? " \u26a0 DESCARTAR por diluci\u00f3n fuerte (ver fila roja)." : "");
+    });
+    resumenDiv.textContent = lineas.join("\n");
+    logMsg("Comparacion finalizada para " + tickers.length + " ticker(s).");
 }
 
 function leeFiltrosScreener() {
@@ -327,15 +394,14 @@ async function runComparison() {
     log.textContent = "";
     resultsTable.innerHTML = "";
     resumenDiv.textContent = "";
-    pintaAlertaDilucion(null);
     compareBtn.disabled = true;
 
     try {
-        const ticker = tickerInput.value.trim().toUpperCase();
+        const tickers = leeTickers();
         const filtros = leeFiltrosScreener();
 
-        if (!ticker || filtros === null) {
-            alert("Rellena Ticker y Screener (o URL)");
+        if (!tickers.length || filtros === null) {
+            alert("Rellena el/los Ticker(s) de empresas y el Screener (o URL)");
             return;
         }
         if (!filtros.length) {
@@ -344,27 +410,28 @@ async function runComparison() {
             return;
         }
 
-        logMsg("Comparando " + ticker + " contra: " +
+        logMsg("Comparando " + tickers.join(", ") + " contra: " +
                screenerSelect.options[screenerSelect.selectedIndex].textContent);
         logMsg("Filtros del screener (" + filtros.length + "): " + filtros.join(", "));
 
-        const [r, dilucion] = await Promise.all([
-            descargaDatos(ticker),
-            compruebaDilucion(ticker)
-        ]);
-        if (!r) {
+        const pares = await Promise.all(tickers.map(async (ticker) => {
+            const [r, dilucion] = await Promise.all([
+                descargaDatos(ticker),
+                compruebaDilucion(ticker)
+            ]);
+            return [ticker, { datos: r ? r.datos : null, dilucion: dilucion }];
+        }));
+        const resultadosPorTicker = Object.fromEntries(pares);
+
+        if (tickers.every(t => !resultadosPorTicker[t].datos)) {
             resumenDiv.textContent =
-                "No se han podido descargar los datos de " + ticker +
-                ": el proxy CORS no respondi\u00f3 con la ficha de Finviz. " +
-                "Revisa el log e int\u00e9ntalo de nuevo en unos minutos.";
-            logMsg("La descarga ha fallado.");
+                "No se han podido descargar los datos de ning\u00fan ticker: el proxy CORS no respondi\u00f3 " +
+                "con la ficha de Finviz. Revisa el log e int\u00e9ntalo de nuevo en unos minutos.";
+            logMsg("La descarga ha fallado para todos los tickers.");
             return;
         }
 
-        logMsg("Datos de la empresa extraidos: " + Object.keys(r.datos).length + " campos");
-
-        pintaAlertaDilucion(dilucion);
-        await pinta(ticker, filtros, r.datos, dilucion);
+        await pintaMultiTicker(tickers, filtros, resultadosPorTicker);
 
     } catch (e) {
         logMsg("Error inesperado: " + e.message);

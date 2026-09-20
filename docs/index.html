@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Comparador empresa vs screener</title>
+<title>Comparador empresas vs screener</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<h1>Comparador empresa vs screener</h1>
+<h1>Comparador empresas vs screener</h1>
 
 <div>
-  <label for="ticker">Ticker de la Empresa </label>
-  <input type="text" id="ticker" value="AAPL" placeholder="AAPL">
+  <label for="ticker">Ticker de empresas </label>
+  <input type="text" id="ticker" value="AAPL" placeholder="AAPL, MSFT, GOOG">
 </div>
 
 <div>
@@ -23,20 +23,13 @@
 <button id="compareBtn">&#128269; Comparar</button>
 
 <div id="resumen"></div>
-<div id="alertaDilucion"></div>
 
+<div class="tabla-scroll">
 <table id="resultsTable">
-  <thead>
-    <tr>
-      <th>Filtro</th>
-      <th>Condici&oacute;n Screener</th>
-      <th>Valor Empresa</th>
-      <th>Comparaci&oacute;n</th>
-      <th>Descripci&oacute;n</th>
-    </tr>
-  </thead>
+  <thead></thead>
   <tbody></tbody>
 </table>
+</div>
 
 <pre id="log"></pre>
 
