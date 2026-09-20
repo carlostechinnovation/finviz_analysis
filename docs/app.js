@@ -27,6 +27,14 @@ const log = document.getElementById("log");
 const SCREENER_POR_DEFECTO = "solventes";
 const VALOR_CUSTOM = "__custom__";
 
+// Copia embebida de docs/urls_screeners_finviz.csv, usada como respaldo si el
+// fetch del CSV falla (p.ej. index.html abierto como file://, donde el
+// navegador bloquea la carga de ficheros locales: ver diseno_informatico.md
+// SS4). Mantener sincronizada con el CSV al anadir un screener nuevo.
+const SCREENERS_RESPALDO =
+    "SCREENER|URL\n" +
+    "solventes|https://finviz.com/screener.ashx?v=211&p=w&f=cap_largeunder%2Cfa_curratio_o1%2Cfa_debteq_u1%2Cfa_epsyoyttm_pos%2Cfa_evsales_u6%2Cfa_fpe_u20%2Cfa_grossmargin_o10%2Cfa_ltdebteq_u1%2Cfa_opermargin_o5%2Cfa_pe_u30%2Cfa_ps_o2%2Csh_float_o1%2Csh_instown_o30%2Csh_relvol_o0.5%2Csh_short_u10%2Cta_averagetruerange_o1%2Cta_highlow52w_a5h%2Cta_perf2_26wup%2Cta_perf_3yup%2Cta_rsi_nos40%2Cta_sma20_pa&ft=4&o=-instown\n";
+
 // Tiempo maximo de espera a la llamada. r.jina.ai renderiza la pagina en su
 // servidor antes de responder, lo que tarda varios segundos; sin este limite
 // una caida del servicio dejaria la pagina esperando indefinidamente.
@@ -180,6 +188,34 @@ async function compruebaDilucion(ticker) {
 /* -------------------------------------------------------------------------
    CARGA DE CSVs
    ------------------------------------------------------------------------- */
+// Rellena screenerSelect a partir del texto CSV (SCREENER|URL, con cabecera).
+// Devuelve true si ha anadido al menos un screener.
+function poblarScreeners(text) {
+    const lines = text.replace(/\r/g, "").split("\n").slice(1);
+
+    let anadidos = 0;
+    let porDefecto = null;
+    for (const line of lines) {
+        if (!line.trim() || line.indexOf("|") === -1) continue;
+        const idx = line.indexOf("|");
+        const nombre = line.slice(0, idx).trim();
+        const url = line.slice(idx + 1).trim();
+        if (!nombre || !url) continue;
+
+        const option = document.createElement("option");
+        option.value = url;
+        option.textContent = nombre;
+        screenerSelect.appendChild(option);
+        anadidos++;
+
+        if (nombre.toLowerCase() === SCREENER_POR_DEFECTO) porDefecto = option;
+        if (!porDefecto && anadidos === 1) porDefecto = option;
+    }
+
+    if (porDefecto) screenerSelect.value = porDefecto.value;
+    return anadidos > 0;
+}
+
 async function loadScreeners() {
     screenerSelect.innerHTML = "";
 
@@ -188,32 +224,16 @@ async function loadScreeners() {
     optCustom.textContent = "CUSTOM (URL manual)";
     screenerSelect.appendChild(optCustom);
 
+    let cargado = false;
     try {
         const resp = await fetch("urls_screeners_finviz.csv", { cache: "no-store" });
-        const text = (await resp.text()).replace(/\r/g, "");
-        const lines = text.split("\n").slice(1);
-
-        let porDefecto = null;
-        for (const line of lines) {
-            if (!line.trim() || line.indexOf("|") === -1) continue;
-            const idx = line.indexOf("|");
-            const nombre = line.slice(0, idx).trim();
-            const url = line.slice(idx + 1).trim();
-            if (!nombre || !url) continue;
-
-            const option = document.createElement("option");
-            option.value = url;
-            option.textContent = nombre;
-            screenerSelect.appendChild(option);
-
-            if (nombre.toLowerCase() === SCREENER_POR_DEFECTO) porDefecto = option;
-            if (!porDefecto && screenerSelect.options.length === 2) porDefecto = option;
-        }
-
-        if (porDefecto) screenerSelect.value = porDefecto.value;
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        cargado = poblarScreeners(await resp.text());
     } catch (e) {
-        logMsg("No se pudo cargar urls_screeners_finviz.csv: " + e.message);
+        logMsg("No se pudo cargar urls_screeners_finviz.csv (" + e.message + "); uso la lista de respaldo embebida.");
     }
+
+    if (!cargado) poblarScreeners(SCREENERS_RESPALDO);
 
     customURLInput.style.display = screenerSelect.value === VALOR_CUSTOM ? "inline-block" : "none";
 }
@@ -268,10 +288,18 @@ function leeTickers() {
     return resultado;
 }
 
+// Ficha de Finviz en velas semanales para el ticker (p.ej. AAPL ->
+// https://finviz.com/stock?t=AAPL&p=w).
+function urlFinvizSemanal(ticker) {
+    return "https://finviz.com/stock?t=" + encodeURIComponent(ticker) + "&p=w";
+}
+
 function pintaCabecera(tickers) {
     const th = ["Filtro", "Condici\u00f3n Screener", "Descripci\u00f3n"]
         .map(t => "<th>" + textoPlano(t) + "</th>")
-        .concat(tickers.map(t => "<th>" + textoPlano(t) + "</th>"))
+        .concat(tickers.map(t =>
+            '<th><a href="' + urlFinvizSemanal(t) + '" target="_blank" rel="noopener noreferrer">' +
+            textoPlano(t) + "</a></th>"))
         .join("");
     resultsThead.innerHTML = "<tr>" + th + "</tr>";
 }
