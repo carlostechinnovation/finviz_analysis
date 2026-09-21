@@ -16,6 +16,8 @@ Aplicación web estática (HTML + JavaScript, sin backend) que coge **uno o vari
 3. Elige un screener predefinido o pega la URL de uno tuyo de Finviz.
 4. Pulsa **Comparar**.
 
+También puedes enlazar directo con los tickers precargados y la comparación ya lanzada (screener por defecto "solventes"), con `?tickers=` en la URL, p. ej. `https://carlostechinnovation.github.io/finviz_analysis/?tickers=AAPL,MSFT,GOOG`. Así es como el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) enlaza su tabla de Selección del día.
+
 ```bash
 cd docs
 python -m http.server 8000

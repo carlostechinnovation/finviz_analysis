@@ -5,6 +5,10 @@
    Admite varios tickers a la vez (separados por comas): cada ticker es una
    columna de la tabla de resultados.
 
+   Si la URL trae ?tickers=AAA,BBB,CCC se precarga el textbox y se lanza la
+   comparacion sola, sin esperar un clic (asi funciona el enlace que manda
+   DIIA en su email con la Seleccion del dia).
+
    La logica pura (filtros, parseo, calculo de dilucion) vive en logica.js,
    cargado antes que este fichero, para poder testearla con Node sin DOM.
    Aqui solo queda el DOM, la red (fetch a los proxies) y la orquestacion.
@@ -26,6 +30,13 @@ const log = document.getElementById("log");
 
 const SCREENER_POR_DEFECTO = "solventes";
 const VALOR_CUSTOM = "__custom__";
+
+// Precarga el textbox de tickers desde el parametro de URL ?tickers=... (p.ej.
+// el enlace del email resumen de DIIA con su Seleccion del dia) y, si llega,
+// lanza la comparacion automaticamente en cuanto se cargan los screeners
+// (mas abajo), para ver directo la tabla de solvencia sin un clic extra.
+const tickersURL = new URLSearchParams(location.search).get("tickers");
+if (tickersURL) tickerInput.value = tickersURL;
 
 // Copia embebida de docs/urls_screeners_finviz.csv, usada como respaldo si el
 // fetch del CSV falla (p.ej. index.html abierto como file://, donde el
@@ -467,4 +478,6 @@ async function runComparison() {
 }
 
 compareBtn.addEventListener("click", runComparison);
-loadScreeners();
+loadScreeners().then(() => {
+    if (tickersURL) runComparison();
+});

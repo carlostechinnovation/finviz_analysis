@@ -47,6 +47,7 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
 
 ## 3. Flujo de ejecución (comparación multi-ticker)
 
+0. Entrada alternativa por URL: si la página se abre con `?tickers=AAA,BBB,CCC`, `app.js` precarga ese valor en el campo "Ticker de empresas" y lanza la comparación sola en cuanto termina `loadScreeners()` (con el screener por defecto, `SCREENER_POR_DEFECTO = "solventes"`), sin esperar un clic en "Comparar". Es el mecanismo que usa el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) para enlazar su tabla de Selección del día ya calculada.
 1. El usuario escribe uno o varios tickers separados por comas en el campo "Ticker de empresas" y elige un screener (o pega una URL).
 2. `leeTickers()` (`app.js`) separa por comas, recorta espacios, pasa a mayúsculas y elimina duplicados y vacíos.
 3. `leeFiltrosScreener()` extrae los códigos de filtro del parámetro `f=` de la URL del screener.
