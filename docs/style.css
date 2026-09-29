@@ -60,10 +60,21 @@ th a {
   white-space: pre-wrap;
 }
 
-#resumen {
-  margin-top: 15px;
+.botones-orden button {
+  margin-right: 5px;
+}
+
+.boton-orden.activo {
   font-weight: bold;
-  white-space: pre-line;
+  background-color: #d0d0d0;
+}
+
+.fila-orden td {
+  background-color: #e6e6e6;
+}
+
+.fila-puntos td {
+  font-weight: bold;
 }
 
 .dilucion-alerta {

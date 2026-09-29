@@ -3,7 +3,9 @@
    100% cliente: no hay backend. Solo HTML + JS estatico en GitHub Pages.
 
    Admite varios tickers a la vez (separados por comas): cada ticker es una
-   columna de la tabla de resultados.
+   columna de la tabla de resultados. Las columnas se muestran en el orden
+   del textbox ("Orden entrada") o de mas a menos puntos ("Orden por filtros
+   cumplidos"), segun el boton pulsado; ver ordenaTickers en logica.js.
 
    Si la URL trae ?tickers=AAA,BBB,CCC se precarga el textbox y se lanza la
    comparacion sola, sin esperar un clic (asi funciona el enlace que manda
@@ -25,7 +27,9 @@ const compareBtn = document.getElementById("compareBtn");
 const resultsTableEl = document.getElementById("resultsTable");
 const resultsThead = resultsTableEl.querySelector("thead");
 const resultsTable = resultsTableEl.querySelector("tbody");
-const resumenDiv = document.getElementById("resumen");
+const botonesOrden = document.getElementById("botonesOrden");
+const ordenEntradaBtn = document.getElementById("ordenEntradaBtn");
+const ordenPuntosBtn = document.getElementById("ordenPuntosBtn");
 const log = document.getElementById("log");
 
 const SCREENER_POR_DEFECTO = "solventes";
@@ -53,6 +57,10 @@ const TIMEOUT_MS = 30000;
 // Minimo de etiquetas reconocidas para dar por buena una descarga.
 const MIN_CAMPOS_VALIDOS = 8;
 
+/**
+ * Anade una linea con hora al log visible de la pagina.
+ * @param {string} msg Mensaje.
+ */
 function logMsg(msg) {
     log.textContent += "[" + new Date().toLocaleTimeString() + "] " + msg + "\n";
     log.scrollTop = log.scrollHeight;
@@ -69,12 +77,23 @@ function logMsg(msg) {
    ------------------------------------------------------------------------- */
 const limitadorProxy = creaLimitador(PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS);
 
+/**
+ * URL del proxy CORS para una URL de destino.
+ * @param {string} objetivo URL de Finviz o de la SEC.
+ * @returns {string} URL a traves de r.jina.ai.
+ */
 function construyeURLProxy(objetivo) {
     return "https://r.jina.ai/" + objetivo;
 }
 
 // Descarga el cuerpo completo con un limite de tiempo que cubre tambien la
 // lectura del cuerpo, no solo la llegada de las cabeceras. Nunca lanza.
+/**
+ * Descarga una URL con limite de tiempo.
+ * @param {string} url URL a descargar.
+ * @param {number} ms Limite en milisegundos.
+ * @returns {Promise<{status:number, texto?:string, motivo?:string}>} Resultado.
+ */
 async function descargaTexto(url, ms) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
@@ -94,6 +113,15 @@ async function descargaTexto(url, ms) {
 // { motivo, definitivo } si no. Devuelve el texto, o null si no hubo manera.
 // Con opciones.silencioso no se anotan los fallos definitivos (p.ej. el 404 de
 // una etiqueta XBRL que la empresa no usa: es lo esperable, no un error).
+/**
+ * Pide una URL al proxy respetando el cupo y reintentando lo transitorio.
+ * @param {string} objetivo URL de destino.
+ * @param {string} etiqueta Prefijo para el log.
+ * @param {number} prioridad PRIORIDAD_FINVIZ o PRIORIDAD_SEC.
+ * @param {Function} [valida] Validador de la respuesta.
+ * @param {{silencioso?:boolean}} [opciones] Opciones de log.
+ * @returns {Promise<string|null>} Texto valido, o null.
+ */
 async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
     const url = construyeURLProxy(objetivo);
     let motivo = "";
@@ -122,7 +150,11 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
     return null;
 }
 
-// Descarga la ficha de Finviz del ticker.
+/**
+ * Descarga y parsea la ficha de Finviz del ticker.
+ * @param {string} ticker Ticker de la empresa.
+ * @returns {Promise<{datos:Object, validos:number}|null>} Ficha, o null.
+ */
 async function descargaDatos(ticker) {
     const objetivo = "https://finviz.com/quote.ashx?t=" + encodeURIComponent(ticker) + "&p=d";
     let datos = null, validos = 0;
@@ -158,6 +190,10 @@ async function descargaDatos(ticker) {
 // vacio, y salian como "ticker no encontrado". Si la descarga falla, se
 // olvida la promesa para que la siguiente comparacion lo vuelva a intentar.
 let promesaMapeoCIK = null;
+/**
+ * Descarga (una vez por sesion) el mapeo ticker -> CIK de la SEC.
+ * @returns {Promise<Object<string,string>|null>} Mapeo, o null si fallo.
+ */
 function cargaMapeoCIK() {
     if (!promesaMapeoCIK) {
         promesaMapeoCIK = (async () => {
@@ -182,7 +218,12 @@ function cargaMapeoCIK() {
     return promesaMapeoCIK;
 }
 
-// Devuelve el CIK, "" si SEC no lista el ticker, o null si no hay mapeo.
+/**
+ * CIK de la SEC para un ticker.
+ * @param {string} ticker Ticker de la empresa.
+ * @returns {Promise<string|null>} CIK, "" si la SEC no lo lista, o null si
+ *     no hay mapeo.
+ */
 async function resuelveCIK(ticker) {
     const mapeo = await cargaMapeoCIK();
     if (!mapeo) return null;
@@ -198,6 +239,12 @@ async function resuelveCIK(ticker) {
 // Si una etiqueta no da una comparacion valida (no existe -> 404 del destino,
 // datos viejos, sin dos fechas separadas ~1 anio, error de escala) se pasa a
 // la siguiente. Devuelve { r, ruta } o null.
+/**
+ * Busca en la SEC una serie de acciones en circulacion reciente y coherente.
+ * @param {string} cik CIK de la empresa (10 digitos).
+ * @param {string} ticker Ticker, para el log.
+ * @returns {Promise<{r:Object, ruta:string}|null>} Dilucion y etiqueta XBRL.
+ */
 async function buscaDilucionSEC(cik, ticker) {
     for (const ruta of XBRL_TAGS_SHARES) {
         const objetivo = "https://data.sec.gov/api/xbrl/companyconcept/CIK" + cik + "/" + ruta + ".json";
@@ -221,6 +268,11 @@ async function buscaDilucionSEC(cik, ticker) {
 // Orquesta la comprobacion completa para un ticker. Nunca lanza: si algo
 // falla (ticker no listado en SEC, sin historico, etc.) devuelve null y solo
 // deja constancia en el log, para no romper la comparacion contra Finviz.
+/**
+ * Comprobacion completa de dilucion de un ticker. Nunca lanza.
+ * @param {string} ticker Ticker de la empresa.
+ * @returns {Promise<Object|null>} Resultado de calculaDilucion, o null.
+ */
 async function compruebaDilucion(ticker) {
     try {
         const cik = await resuelveCIK(ticker);
@@ -254,8 +306,11 @@ async function compruebaDilucion(ticker) {
 /* -------------------------------------------------------------------------
    CARGA DE CSVs
    ------------------------------------------------------------------------- */
-// Rellena screenerSelect a partir del texto CSV (SCREENER|URL, con cabecera).
-// Devuelve true si ha anadido al menos un screener.
+/**
+ * Rellena screenerSelect a partir del texto CSV (SCREENER|URL, con cabecera).
+ * @param {string} text Contenido del CSV.
+ * @returns {boolean} true si ha anadido al menos un screener.
+ */
 function poblarScreeners(text) {
     const lines = text.replace(/\r/g, "").split("\n").slice(1);
 
@@ -282,6 +337,10 @@ function poblarScreeners(text) {
     return anadidos > 0;
 }
 
+/**
+ * Carga el desplegable de screeners (CSV, o la copia embebida si falla).
+ * @returns {Promise<void>}
+ */
 async function loadScreeners() {
     screenerSelect.innerHTML = "";
 
@@ -301,14 +360,23 @@ async function loadScreeners() {
 
     if (!cargado) poblarScreeners(SCREENERS_RESPALDO);
 
+    actualizaCampoCustom();
+}
+
+/**
+ * Muestra el campo de URL manual solo con la opcion CUSTOM.
+ */
+function actualizaCampoCustom() {
     customURLInput.style.display = screenerSelect.value === VALOR_CUSTOM ? "inline-block" : "none";
 }
 
-screenerSelect.addEventListener("change", () => {
-    customURLInput.style.display = screenerSelect.value === VALOR_CUSTOM ? "inline-block" : "none";
-});
+screenerSelect.addEventListener("change", actualizaCampoCustom);
 
 let descripcionesCache = null;
+/**
+ * Carga (una vez) el glosario descripcion_filtros.csv.
+ * @returns {Promise<Object<string,string>>} Etiqueta -> descripcion.
+ */
 async function loadDescriptions() {
     if (descripcionesCache) return descripcionesCache;
     const map = {};
@@ -332,15 +400,33 @@ async function loadDescriptions() {
    Columnas fijas: Filtro | Condicion Screener | Descripcion, seguidas de una
    columna por cada ticker. El valor de la empresa va DENTRO de su celda
    (no en una columna aparte); el color de la celda (verde/rojo/naranja) es
-   lo que indica CUMPLE / INCUMPLE / N-A, o el aviso de dilucion en la
-   primera fila.
+   lo que indica CUMPLE / INCUMPLE / N-A, o el aviso de dilucion.
+   Filas, de arriba abajo: "Orden entrada" (solo con 2 o mas empresas),
+   "Orden por filtros cumplidos" (puntos), dilucion y un filtro por fila.
    ------------------------------------------------------------------------- */
+
+// Ultima comparacion lanzada ({ tickers, filtros, resultadosPorTicker,
+// descripciones }) y criterio de orden de columnas elegido con los botones.
+// Se guardan para poder reordenar la tabla sin volver a descargar nada.
+let comparacionActual = null;
+let criterioOrden = ORDEN_ENTRADA;
+
+/**
+ * Escapa un texto para insertarlo como HTML.
+ * @param {*} s Texto (undefined/null se tratan como "").
+ * @returns {string} Texto escapado.
+ */
 function textoPlano(s) {
     const d = document.createElement("div");
     d.textContent = String(s === undefined || s === null ? "" : s);
     return d.innerHTML;
 }
 
+/**
+ * Lee los tickers del textbox: mayusculas, sin vacios ni duplicados, en el
+ * mismo orden en que se escribieron.
+ * @returns {string[]} Tickers en orden de entrada.
+ */
 function leeTickers() {
     const vistos = new Set();
     const resultado = [];
@@ -354,143 +440,185 @@ function leeTickers() {
     return resultado;
 }
 
-// Ficha de Finviz en velas semanales para el ticker (p.ej. AAPL ->
-// https://finviz.com/stock?t=AAPL&p=w).
+/**
+ * Ficha de Finviz en velas semanales (p.ej. AAPL ->
+ * https://finviz.com/stock?t=AAPL&p=w).
+ * @param {string} ticker Ticker de la empresa.
+ * @returns {string} URL.
+ */
 function urlFinvizSemanal(ticker) {
     return "https://finviz.com/stock?t=" + encodeURIComponent(ticker) + "&p=w";
 }
 
-function pintaCabecera(tickers) {
+/**
+ * HTML de una celda de datos.
+ * @param {*} texto Contenido (se escapa).
+ * @param {string} [clase] Clase CSS (ok / nok / na / dilucion-alerta).
+ * @returns {string} HTML del <td>.
+ */
+function celda(texto, clase) {
+    const atributo = clase ? ' class="' + clase + '"' : "";
+    return "<td" + atributo + ">" + textoPlano(texto) + "</td>";
+}
+
+/**
+ * Pinta la cabecera: tres columnas fijas + una por ticker, en el orden dado.
+ * @param {string[]} columnas Tickers en el orden de presentacion.
+ */
+function pintaCabecera(columnas) {
     const th = ["Filtro", "Condici\u00f3n Screener", "Descripci\u00f3n"]
         .map(t => "<th>" + textoPlano(t) + "</th>")
-        .concat(tickers.map(t =>
+        .concat(columnas.map(t =>
             '<th><a href="' + urlFinvizSemanal(t) + '" target="_blank" rel="noopener noreferrer">' +
             textoPlano(t) + "</a></th>"))
         .join("");
     resultsThead.innerHTML = "<tr>" + th + "</tr>";
 }
 
-// Primera fila de la tabla: aviso de dilucion (independiente del screener).
-// Cada celda muestra el porcentaje de esa empresa: verde si esta por debajo
-// del umbral, rojo con el aviso si lo supera, naranja si no hay datos o si
-// todavia no ha llegado (dilucion === undefined).
-function pintaFilaDilucion(tickers, resultadosPorTicker) {
-    const celdasTicker = tickers.map(t => {
-        const d = resultadosPorTicker[t].dilucion;
-        if (d === undefined) {
-            return '<td class="na">' + textoPlano("(pendiente)") + "</td>";
-        }
-        if (!d) {
-            return '<td class="na">N/D</td>';
-        }
-        const pctTexto = (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
-        if (d.pct >= UMBRAL_DILUCION_PCT) {
-            return '<td class="dilucion-alerta">' +
-                textoPlano("ALERTA POR DILUCI\u00d3N: " + pctTexto + " en 1 a\u00f1o") + "</td>";
-        }
-        return '<td class="ok">' + textoPlano(pctTexto) + "</td>";
-    }).join("");
-
+/**
+ * Anade una fila al cuerpo de la tabla.
+ * @param {string[]} fijas Textos de las tres columnas fijas.
+ * @param {string[]} celdasTicker HTML de las celdas de cada ticker.
+ * @param {string} [clase] Clase CSS de la fila.
+ */
+function anadeFila(fijas, celdasTicker, clase) {
     const tr = document.createElement("tr");
-    tr.innerHTML =
-        "<td>" + textoPlano("Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)") + "</td>" +
-        "<td>" + textoPlano("< " + UMBRAL_DILUCION_PCT + "% de aumento") + "</td>" +
-        "<td>" + textoPlano(
-            "Aumento de acciones en circulaci\u00f3n en ~1 a\u00f1o, seg\u00fan SEC EDGAR " +
-            "(no Finviz). N/D = sin datos suficientes en SEC EDGAR. Ver README \u00a77.4."
-        ) + "</td>" +
-        celdasTicker;
+    if (clase) tr.className = clase;
+    tr.innerHTML = fijas.map(t => celda(t)).join("") + celdasTicker.join("");
     resultsTable.appendChild(tr);
 }
 
-// Pinta la tabla con lo que haya llegado hasta ahora. Se llama cada vez que
-// termina una descarga, asi la tabla se va rellenando mientras la cola del
-// proxy despacha el resto. En resultadosPorTicker[t], datos/dilucion valen
-// undefined mientras estan pendientes y null si la descarga fallo.
-function pintaMultiTicker(tickers, filtros, resultadosPorTicker, descripciones) {
-    pintaCabecera(tickers);
-    resultsTable.innerHTML = "";
-    pintaFilaDilucion(tickers, resultadosPorTicker);
-
-    const ordenados = ORDEN.filter(c => filtros.includes(c))
-        .concat(filtros.filter(c => !ORDEN.includes(c)));
-
-    const contadores = {};
-    for (const t of tickers) contadores[t] = { ok: 0, nok: 0, na: 0 };
-
-    for (const codigo of ordenados) {
-        const def = FILTROS[codigo];
-        const etiqueta = def ? def.finviz : codigo;
-        const condicion = def ? def.texto : "(filtro no soportado)";
-
-        const porTicker = tickers.map(t => {
-            const datos = resultadosPorTicker[t].datos;
-            if (datos === undefined) return { texto: "(descargando)", estado: "na" };
-            if (!datos) return { texto: "(sin datos)", estado: "na" };
-
-            const bruto = def ? buscaValor(datos, etiqueta) : undefined;
-            const mostrado = (bruto === undefined || bruto === "") ? "N/A" : bruto;
-
-            let estado = "na";
-            if (def) {
-                const num = aNumero(bruto, def.escala);
-                if (!isNaN(num)) {
-                    const r = compara(num, def.op, def.valor);
-                    if (r !== null) estado = r ? "ok" : "nok";
-                }
-            }
-            return { texto: String(mostrado), estado: estado };
-        });
-
-        tickers.forEach((t, i) => {
-            if (!resultadosPorTicker[t].datos) return;
-            const estado = porTicker[i].estado;
-            if (estado === "ok") contadores[t].ok++;
-            else if (estado === "nok") contadores[t].nok++;
-            else contadores[t].na++;
-        });
-
-        const celdasTicker = porTicker.map(v => {
-            return '<td class="' + v.estado + '">' + textoPlano(v.texto) + "</td>";
-        }).join("");
-
-        const tr = document.createElement("tr");
-        tr.innerHTML =
-            "<td>" + textoPlano(etiqueta) + "</td>" +
-            "<td>" + textoPlano(condicion) + "</td>" +
-            "<td>" + textoPlano(buscaDescripcion(descripciones, etiqueta)) + "</td>" +
-            celdasTicker;
-        resultsTable.appendChild(tr);
-    }
-
-    const pendientesFinviz = tickers.filter(t => resultadosPorTicker[t].datos === undefined).length;
-    const pendientesSEC = tickers.filter(t => resultadosPorTicker[t].dilucion === undefined).length;
-    const lineas = [];
-    if (pendientesFinviz || pendientesSEC) {
-        lineas.push("En curso: faltan " + pendientesFinviz + " ficha(s) de Finviz y " + pendientesSEC +
-            " comprobaci\u00f3n(es) de diluci\u00f3n. El proxy admite " + PROXY_MAX_POR_MINUTO +
-            " peticiones/minuto, as\u00ed que la tabla se va completando sola.");
-    }
-    for (const t of tickers) {
-        const datos = resultadosPorTicker[t].datos;
-        if (datos === undefined) {
-            lineas.push(t + ": descargando...");
-            continue;
-        }
-        if (!datos) {
-            lineas.push(t + ": sin datos (fall\u00f3 la descarga de Finviz tras reintentar; ver log).");
-            continue;
-        }
-        const c = contadores[t];
-        const d = resultadosPorTicker[t].dilucion;
-        const veto = d && d.pct >= UMBRAL_DILUCION_PCT;
-        lineas.push(t + ": " + c.ok + " CUMPLE - " + c.nok + " INCUMPLE - " + c.na + " N/A" +
-            (c.nok === 0 && c.na === 0 ? " -> pasa todos los criterios del screener." : "") +
-            (veto ? " \u26a0 DESCARTAR por diluci\u00f3n fuerte (ver fila roja)." : ""));
-    }
-    resumenDiv.textContent = lineas.join("\n");
+/**
+ * Fila "Orden entrada": posicion de cada ticker en el textbox (1, 2, 3...).
+ * Al ordenar por puntos, cada celda sigue a su ticker.
+ * @param {string[]} columnas Tickers en el orden de presentacion.
+ * @param {string[]} tickers Tickers en orden de entrada.
+ */
+function pintaFilaOrdenEntrada(columnas, tickers) {
+    anadeFila(
+        ["Orden entrada", "", "Posici\u00f3n de la empresa en el campo \"Ticker de empresas\"."],
+        columnas.map(t => celda(tickers.indexOf(t) + 1)),
+        "fila-orden");
 }
 
+/**
+ * Fila "Orden por filtros cumplidos": puntos de cada ticker.
+ * @param {string[]} columnas Tickers en el orden de presentacion.
+ * @param {Object<string,number>} puntos ticker -> puntos.
+ */
+function pintaFilaPuntos(columnas, puntos) {
+    anadeFila(
+        ["Orden por filtros cumplidos", "M\u00e1s puntos = mejor",
+         "+" + PUNTOS_POR_ESTADO.ok + " por casilla verde, " + PUNTOS_POR_ESTADO.na +
+         " por naranja, " + PUNTOS_POR_ESTADO.nok + " por roja y " + PUNTOS_ALERTA_DILUCION +
+         " por alerta de diluci\u00f3n."],
+        columnas.map(t => celda(puntos[t])),
+        "fila-puntos");
+}
+
+/**
+ * Celda de dilucion de un ticker: verde por debajo del umbral, roja con el
+ * aviso si lo supera, naranja si no hay datos o aun no han llegado.
+ * @param {Object|null|undefined} d Resultado de compruebaDilucion
+ *     (undefined = pendiente).
+ * @returns {string} HTML del <td>.
+ */
+function celdaDilucion(d) {
+    if (d === undefined) return celda("(pendiente)", "na");
+    if (!d) return celda("N/D", "na");
+    const pctTexto = (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
+    if (hayAlertaDilucion(d)) {
+        return celda("ALERTA POR DILUCI\u00d3N: " + pctTexto + " en 1 a\u00f1o", "dilucion-alerta");
+    }
+    return celda(pctTexto, "ok");
+}
+
+/**
+ * Fila de dilucion (independiente del screener).
+ * @param {string[]} columnas Tickers en el orden de presentacion.
+ * @param {Object} resultadosPorTicker ticker -> { datos, dilucion }.
+ */
+function pintaFilaDilucion(columnas, resultadosPorTicker) {
+    anadeFila(
+        ["Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)", "< " + UMBRAL_DILUCION_PCT + "% de aumento",
+         "Aumento de acciones en circulaci\u00f3n en ~1 a\u00f1o, seg\u00fan SEC EDGAR " +
+         "(no Finviz). N/D = sin datos suficientes en SEC EDGAR. Ver diseno_funcional.md \u00a76."],
+        columnas.map(t => celdaDilucion(resultadosPorTicker[t].dilucion)));
+}
+
+/**
+ * Fila de un filtro del screener.
+ * @param {string} codigo Codigo del filtro.
+ * @param {string[]} columnas Tickers en el orden de presentacion.
+ * @param {Object} evaluacionesFiltro ticker -> { texto, estado }.
+ * @param {Object<string,string>} descripciones Glosario de etiquetas.
+ */
+function pintaFilaFiltro(codigo, columnas, evaluacionesFiltro, descripciones) {
+    const def = FILTROS[codigo];
+    const etiqueta = def ? def.finviz : codigo;
+    anadeFila(
+        [etiqueta, def ? def.texto : "(filtro no soportado)", buscaDescripcion(descripciones, etiqueta)],
+        columnas.map(t => celda(evaluacionesFiltro[t].texto, evaluacionesFiltro[t].estado)));
+}
+
+/**
+ * Pinta la tabla completa con lo que haya llegado hasta ahora. Se llama cada
+ * vez que termina una descarga y al pulsar un boton de orden. En
+ * resultadosPorTicker[t], datos/dilucion valen undefined mientras estan
+ * pendientes y null si la descarga fallo.
+ * @param {Object} comparacion { tickers, filtros, resultadosPorTicker, descripciones }.
+ */
+function pintaMultiTicker(comparacion) {
+    const tickers = comparacion.tickers;
+    const resultados = comparacion.resultadosPorTicker;
+    const codigos = ordenaFiltros(comparacion.filtros);
+    const evaluaciones = evaluaTabla(tickers, codigos, resultados);
+    const puntos = calculaPuntosPorTicker(tickers, evaluaciones, resultados);
+    const columnas = ordenaTickers(tickers, puntos, criterioOrden);
+
+    pintaCabecera(columnas);
+    resultsTable.innerHTML = "";
+    if (hayVariasEmpresas(tickers.length)) pintaFilaOrdenEntrada(columnas, tickers);
+    pintaFilaPuntos(columnas, puntos);
+    pintaFilaDilucion(columnas, resultados);
+    for (const codigo of codigos) {
+        pintaFilaFiltro(codigo, columnas, evaluaciones[codigo], comparacion.descripciones);
+    }
+}
+
+/**
+ * Repinta la ultima comparacion, si la hay.
+ */
+function repinta() {
+    if (comparacionActual) pintaMultiTicker(comparacionActual);
+}
+
+/**
+ * Muestra los botones de orden solo con varias empresas y marca el activo.
+ */
+function actualizaBotonesOrden() {
+    const n = comparacionActual ? comparacionActual.tickers.length : 0;
+    botonesOrden.hidden = !hayVariasEmpresas(n);
+    ordenEntradaBtn.classList.toggle("activo", criterioOrden === ORDEN_ENTRADA);
+    ordenPuntosBtn.classList.toggle("activo", criterioOrden === ORDEN_PUNTOS);
+    ordenEntradaBtn.setAttribute("aria-pressed", String(criterioOrden === ORDEN_ENTRADA));
+    ordenPuntosBtn.setAttribute("aria-pressed", String(criterioOrden === ORDEN_PUNTOS));
+}
+
+/**
+ * Cambia el criterio de orden de columnas y recarga la tabla (sin descargar).
+ * @param {string} criterio ORDEN_ENTRADA u ORDEN_PUNTOS.
+ */
+function seleccionaOrden(criterio) {
+    criterioOrden = criterio;
+    actualizaBotonesOrden();
+    repinta();
+}
+
+/**
+ * Codigos de filtro del parametro f= del screener elegido.
+ * @returns {string[]|null} Codigos, o null si no hay screener ni URL.
+ */
 function leeFiltrosScreener() {
     let screenerURL = screenerSelect.value;
     if (screenerURL === VALOR_CUSTOM) screenerURL = customURLInput.value.trim();
@@ -501,73 +629,116 @@ function leeFiltrosScreener() {
     return f ? f.split(",").map(x => x.trim()).filter(Boolean) : [];
 }
 
+/**
+ * Valida el formulario y devuelve tickers y filtros, o null si no sirve.
+ * @returns {{tickers:string[], filtros:string[]}|null} Entrada valida, o null.
+ */
+function leeEntrada() {
+    const tickers = leeTickers();
+    const filtros = leeFiltrosScreener();
+    if (!tickers.length || filtros === null) {
+        alert("Rellena el/los Ticker(s) de empresas y el Screener (o URL)");
+        return null;
+    }
+    if (!filtros.length) {
+        logMsg("AVISO: la URL del screener no contiene filtros (parametro 'f').");
+        return null;
+    }
+    return { tickers: tickers, filtros: filtros };
+}
+
+/**
+ * Deja en el log que se compara, contra que y cuanto tardara.
+ * @param {string[]} tickers Empresas.
+ * @param {string[]} filtros Codigos del screener.
+ */
+function anunciaComparacion(tickers, filtros) {
+    logMsg("Comparando " + tickers.join(", ") + " contra: " +
+           screenerSelect.options[screenerSelect.selectedIndex].textContent);
+    logMsg("Filtros del screener (" + filtros.length + "): " + filtros.join(", "));
+    // Cada ticker cuesta 1 peticion a Finviz y de 1 a 3 a SEC EDGAR, mas una
+    // unica para el mapeo ticker->CIK. Las de Finviz van primero en la cola.
+    logMsg("Tiempo estimado: entre " + minutosEstimados(2 * tickers.length + 1) + " y " +
+           minutosEstimados(4 * tickers.length + 1) + " minuto(s) (limite del proxy: " +
+           PROXY_MAX_POR_MINUTO + " peticiones/minuto). Las fichas de Finviz van primero.");
+}
+
+/**
+ * Descarga ficha y dilucion de un ticker, repintando al llegar cada una.
+ * @param {string} ticker Ticker de la empresa.
+ * @param {Object} resultadosPorTicker Donde se guardan los resultados.
+ * @returns {Promise<void>}
+ */
+function descargaTicker(ticker, resultadosPorTicker) {
+    return Promise.all([
+        descargaDatos(ticker).then(r => {
+            resultadosPorTicker[ticker].datos = r ? r.datos : null;
+            repinta();
+        }),
+        compruebaDilucion(ticker).then(d => {
+            resultadosPorTicker[ticker].dilucion = d;
+            repinta();
+        })
+    ]);
+}
+
+/**
+ * Deja en el log el balance final de la comparacion.
+ * @param {string[]} tickers Empresas.
+ * @param {Object} resultadosPorTicker ticker -> { datos, dilucion }.
+ */
+function anunciaFin(tickers, resultadosPorTicker) {
+    const fallidos = tickers.filter(t => !resultadosPorTicker[t].datos);
+    if (fallidos.length === tickers.length) {
+        logMsg("No se han podido descargar los datos de ningun ticker: el proxy CORS no respondio " +
+               "con la ficha de Finviz. Intentalo de nuevo en unos minutos.");
+        return;
+    }
+    logMsg("Comparacion finalizada para " + tickers.length + " ticker(s)" +
+           (fallidos.length ? "; sin ficha de Finviz: " + fallidos.join(", ") : "") + ".");
+}
+
+/**
+ * Lanza la comparacion: valida, pinta la tabla vacia y la va rellenando
+ * segun llegan las descargas.
+ * @returns {Promise<void>}
+ */
 async function runComparison() {
     log.textContent = "";
+    resultsThead.innerHTML = "";
     resultsTable.innerHTML = "";
-    resumenDiv.textContent = "";
+    comparacionActual = null;
+    actualizaBotonesOrden();
     compareBtn.disabled = true;
 
     try {
-        const tickers = leeTickers();
-        const filtros = leeFiltrosScreener();
+        const entrada = leeEntrada();
+        if (!entrada) return;
+        anunciaComparacion(entrada.tickers, entrada.filtros);
 
-        if (!tickers.length || filtros === null) {
-            alert("Rellena el/los Ticker(s) de empresas y el Screener (o URL)");
-            return;
-        }
-        if (!filtros.length) {
-            resumenDiv.textContent = "La URL del screener no contiene filtros (par\u00e1metro 'f').";
-            logMsg("AVISO: la URL del screener no tiene parametro 'f'.");
-            return;
-        }
-
-        logMsg("Comparando " + tickers.join(", ") + " contra: " +
-               screenerSelect.options[screenerSelect.selectedIndex].textContent);
-        logMsg("Filtros del screener (" + filtros.length + "): " + filtros.join(", "));
-
-        // Cada ticker cuesta 1 peticion a Finviz y de 1 a 3 a SEC EDGAR, mas una
-        // unica para el mapeo ticker->CIK. Las de Finviz van primero en la cola.
-        logMsg("Tiempo estimado: entre " + minutosEstimados(2 * tickers.length + 1) + " y " +
-               minutosEstimados(4 * tickers.length + 1) + " minuto(s) (limite del proxy: " +
-               PROXY_MAX_POR_MINUTO + " peticiones/minuto). Las fichas de Finviz van primero.");
-
-        const descripciones = await loadDescriptions();
         const resultadosPorTicker = {};
-        for (const t of tickers) resultadosPorTicker[t] = { datos: undefined, dilucion: undefined };
-        const repinta = () => pintaMultiTicker(tickers, filtros, resultadosPorTicker, descripciones);
+        for (const t of entrada.tickers) resultadosPorTicker[t] = { datos: undefined, dilucion: undefined };
+        comparacionActual = {
+            tickers: entrada.tickers,
+            filtros: entrada.filtros,
+            resultadosPorTicker: resultadosPorTicker,
+            descripciones: await loadDescriptions()
+        };
+        actualizaBotonesOrden();
         repinta();
 
-        await Promise.all(tickers.map((ticker) => Promise.all([
-            descargaDatos(ticker).then(r => {
-                resultadosPorTicker[ticker].datos = r ? r.datos : null;
-                repinta();
-            }),
-            compruebaDilucion(ticker).then(d => {
-                resultadosPorTicker[ticker].dilucion = d;
-                repinta();
-            })
-        ])));
-
-        if (tickers.every(t => !resultadosPorTicker[t].datos)) {
-            resumenDiv.textContent =
-                "No se han podido descargar los datos de ning\u00fan ticker: el proxy CORS no respondi\u00f3 " +
-                "con la ficha de Finviz. Revisa el log e int\u00e9ntalo de nuevo en unos minutos.";
-            logMsg("La descarga ha fallado para todos los tickers.");
-            return;
-        }
-        const fallidos = tickers.filter(t => !resultadosPorTicker[t].datos);
-        logMsg("Comparacion finalizada para " + tickers.length + " ticker(s)" +
-               (fallidos.length ? "; sin ficha de Finviz: " + fallidos.join(", ") : "") + ".");
-
+        await Promise.all(entrada.tickers.map(t => descargaTicker(t, resultadosPorTicker)));
+        anunciaFin(entrada.tickers, resultadosPorTicker);
     } catch (e) {
         logMsg("Error inesperado: " + e.message);
-        resumenDiv.textContent = "Error inesperado: " + e.message;
     } finally {
         compareBtn.disabled = false;
     }
 }
 
 compareBtn.addEventListener("click", runComparison);
+ordenEntradaBtn.addEventListener("click", () => seleccionaOrden(ORDEN_ENTRADA));
+ordenPuntosBtn.addEventListener("click", () => seleccionaOrden(ORDEN_PUNTOS));
 loadScreeners().then(() => {
     if (tickersURL) runComparison();
 });

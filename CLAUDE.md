@@ -25,7 +25,8 @@ Por tanto, para este proyecto:
   esquivar CORS.
 - **Base de datos**: ninguna. No hay estado persistente entre ejecuciones.
 - **Tests**: `node --test` (test runner incorporado en Node, sin
-  dependencias), no pytest. Ver `tests/logica.test.js`.
+  dependencias), no pytest. Ver `tests/logica.test.js` y
+  `tests/orden.test.js`.
 
 ## Estructura de carpetas de este proyecto
 

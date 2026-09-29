@@ -21,15 +21,20 @@ Finviz te dice **qué** empresas pasan el filtro, pero no **por qué** una concr
 | 🔴 Rojo | `INCUMPLE` | El valor de la empresa no satisface la condición |
 | 🟠 Naranja | `N/A` | El dato no está disponible, o el filtro no está soportado por la app |
 
-5. Además, la primera fila de la tabla es una **alerta de dilución** (independiente del screener): si el número de acciones en circulación de una empresa ha crecido mucho en el último año, esa celda sale en rojo con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año`, aunque el resto de filtros estén en `CUMPLE`. Ver [§4](#4-la-alerta-de-dilución-real-sec-edgar).
+5. Además, antes de las filas de filtros hay una fila de **alerta de dilución** (independiente del screener): si el número de acciones en circulación de una empresa ha crecido mucho en el último año, esa celda sale en rojo con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año`, aunque el resto de filtros estén en `CUMPLE`. Ver [§6](#6-la-alerta-de-dilución-real-sec-edgar).
+6. Encima de la fila de dilución, justo debajo de la cabecera, hay dos filas de ordenación:
+   - **Orden entrada** (fondo gris claro, solo con 2 o más empresas): la posición de cada empresa en el campo "Ticker de empresas" (1, 2, 3…).
+   - **Orden por filtros cumplidos**: la puntuación de cada empresa (ver [§7](#7-puntuación-y-orden-de-las-empresas)).
+7. Con 2 o más empresas aparecen, bajo el botón "Comparar", los botones **Orden entrada** y **Orden por filtros cumplidos**, que recargan la tabla con las columnas en ese orden (sin volver a descargar datos). Por defecto se usa el orden de entrada.
 
-Al final se muestra un resumen por ticker (`N CUMPLE - N INCUMPLE - N N/A`, más el aviso de dilución si aplica) y un log con el detalle de cada descarga.
+Debajo de la tabla, un log con el detalle de cada descarga.
 
 ## 3. Cómo probar que funciona
 
 - **Cumplimiento**: si comparas una empresa que **sí** aparece en los resultados del screener en Finviz, su columna debe salir **toda verde**.
 - **Incumplimiento**: si coges una empresa al azar que **no** aparece, debe tener al menos un criterio en **rojo** (`INCUMPLE`) en su columna.
-- **Dilución**: comparando `BFRI` debe salir la fila de dilución en rojo (ver [§4.2](#42-caso-real-verificado-bfri)), y comparando una empresa estable (p. ej. `AAPL`) esa celda debe salir vacía.
+- **Dilución**: comparando `BFRI` debe salir la fila de dilución en rojo (ver [§6.1](#61-caso-real-verificado-bfri)), y comparando una empresa estable (p. ej. `AAPL`) esa celda debe salir en verde con su porcentaje.
+- **Orden**: comparando varias empresas y pulsando **Orden por filtros cumplidos**, las columnas deben quedar de más a menos puntos, cualquier empresa con alerta de dilución al final, y la fila "Orden entrada" debe seguir mostrando la posición original de cada una.
 
 ## 4. Análisis del screener predefinido: `solventes`
 
@@ -170,9 +175,31 @@ Datos reales de SEC EDGAR (CIK `1858685`, concepto contable `us-gaap:CommonStock
 
 - **No distingue dilución real de un *split*.** Los datos "as filed" de SEC EDGAR no se reexpresan retroactivamente tras un desdoblamiento de acciones (que no diluye realmente, solo reparte el mismo valor en más títulos). Un split reciente puede disparar esta alerta como falso positivo.
 - **Solo cubre empresas que presentan ante la SEC.** No aplica a extranjeras que cotizan como ADR sin obligación de presentar 10-K/10-Q; en ese caso la celda simplemente sale vacía (no se asume nada).
-- **El umbral es fijo (20 %) y global**, no se ajusta por sector; sectores intensivos en I+D en fase pre-beneficio (biotecnología, minería junior) diluyen con más frecuencia como parte normal de su modelo de financiación, así que la alerta debe leerse como una señal de atención, no como un veto automático de inversión.
+- **El umbral es fijo (20 %) y global**, no se ajusta por sector; sectores intensivos en I+D en fase pre-beneficio (biotecnología, minería junior) diluyen con más frecuencia como parte normal de su modelo de financiación. En la puntuación (§7) la alerta manda la empresa al final del ranking, pero su columna sigue visible con todos sus datos: es una señal de atención para revisar a mano, no un veto automático de inversión.
 
-## 7. Limitaciones funcionales generales
+## 7. Puntuación y orden de las empresas
+
+Con muchas empresas a la vez (p. ej. los 55 tickers del email de DIIA), leer la tabla columna a columna no escala. La fila **Orden por filtros cumplidos** resume cada columna en un número y permite ordenarlas de mejor a peor:
+
+| Casilla | Puntos | Razón |
+|---|---|---|
+| 🟢 Verde (`CUMPLE`) | **+1** | Cada criterio superado cuenta lo mismo |
+| 🟠 Naranja (`N/A`, sin dato, descarga fallida o pendiente) | **0** | Sin dato no hay evidencia ni a favor ni en contra |
+| 🔴 Roja (`INCUMPLE`) | **−0,5** | Penaliza, pero menos de lo que suma un cumplimiento |
+| Fila de dilución en alerta (`ALERTA POR DILUCIÓN`) | **−99** | Veto de ordenación: ver abajo |
+| Fila de dilución en verde o `N/D` | **0** | La dilución solo resta; no tenerla no es un mérito extra |
+
+**Pesos iguales para todos los filtros.** La puntuación es una suma de señales binarias con el mismo peso, el mismo esquema que el *F-score* de Piotroski, que suma 9 señales contables (1 punto cada una) y separa empresas ganadoras de perdedoras dentro del mismo grupo de valor [7]. Dar el mismo peso a cada criterio, en lugar de estimar pesos "óptimos", es además robusto: los modelos lineales con pesos unitarios predicen casi tan bien como los de pesos ajustados y no se sobreajustan a una muestra concreta [8]. Aquí no hay una muestra con la que ajustar pesos, así que los pesos iguales son la opción honesta.
+
+**Asimetría −0,5 / +1.** Es una elección de diseño, no un estándar: un incumplimiento debe pesar en contra, pero una empresa que cumple 18 de 21 filtros sigue estando más cerca del perfil del screener que una que cumple 12 y tiene 9 sin dato. Con −0,5 los incumplimientos desempatan sin dominar la suma.
+
+**Dilución como veto (−99).** Las emisiones de acciones predicen rendimientos futuros inferiores de forma persistente: las empresas que amplían capital rinden menos que empresas comparables durante años [9], y la variación del número de acciones en circulación predice los rendimientos futuros con signo negativo, con más fuerza que el tamaño o la relación valor contable/precio [10]. Por eso la alerta no se trata como "un filtro más" sino como una regla no compensatoria (lexicográfica): primero se separa a quien diluye fuerte y solo después se ordena por el resto de criterios [11]. Como un screener tiene muchos menos de 99 filtros (el predefinido, 21), −99 garantiza que ninguna suma de casillas verdes compense la alerta: cualquier empresa con alerta queda detrás de cualquiera sin ella.
+
+**Orden.** "Orden por filtros cumplidos" ordena de más a menos puntos; a igualdad de puntos se respeta el orden de entrada. "Orden entrada" respeta el orden del campo "Ticker de empresas", y la fila del mismo nombre deja ver ese orden original también cuando las columnas están ordenadas por puntos.
+
+**Limitaciones.** La puntuación depende del screener elegido: solo compara empresas **entre sí** frente a ese screener, no mide calidad absoluta. Mientras las descargas están en curso, las casillas pendientes valen 0, así que con el orden por puntos activo las columnas pueden cambiar de sitio a medida que llegan datos.
+
+## 8. Limitaciones funcionales generales
 
 - **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
 - **Solo se soportan los 21 filtros documentados en §4.1.** Un screener con otros códigos mostrará esas filas como `N/A`.
@@ -192,3 +219,13 @@ Datos reales de SEC EDGAR (CIK `1858685`, concepto contable `us-gaap:CommonStock
 [5] U.S. Securities and Exchange Commission, SEC EDGAR, API `companyconcept` (XBRL Frames API): `https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/{taxonomia}/{concepto}.json`. Documentación oficial: `https://www.sec.gov/edgar/sec-api-documentation`. Datos de `BFRI` consultados en `https://data.sec.gov/api/xbrl/companyconcept/CIK0001858685/us-gaap/CommonStockSharesOutstanding.json`.
 
 [6] U.S. Securities and Exchange Commission, mapeo oficial ticker → CIK: `https://www.sec.gov/files/company_tickers.json`.
+
+[7] J. D. Piotroski, "Value Investing: The Use of Historical Financial Statement Information to Separate Winners from Losers", *Journal of Accounting Research*, 38 (Supplement), 2000, pp. 1-41.
+
+[8] R. M. Dawes, "The robust beauty of improper linear models in decision making", *American Psychologist*, 34(7), 1979, pp. 571-582.
+
+[9] T. Loughran y J. R. Ritter, "The New Issues Puzzle", *The Journal of Finance*, 50(1), 1995, pp. 23-51.
+
+[10] J. Pontiff y A. Woodgate, "Share Issuance and Cross-sectional Returns", *The Journal of Finance*, 63(2), 2008, pp. 921-945.
+
+[11] P. C. Fishburn, "Lexicographic Orders, Utilities and Decision Rules: A Survey", *Management Science*, 20(11), 1974, pp. 1442-1471.

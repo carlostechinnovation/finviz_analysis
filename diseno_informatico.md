@@ -25,14 +25,16 @@ navegador  --fetch-->  https://r.jina.ai/https://data.sec.gov/api/xbrl/companyco
 
 ```
 docs/                            <- raiz publicada en GitHub Pages
-├── index.html                   formulario + tabla de resultados (cabecera dinamica)
-├── logica.js                    logica pura: filtros, parseo, calculo de dilucion (sin DOM ni red)
+├── index.html                   formulario, botones de orden + tabla de resultados (cabecera dinamica)
+├── logica.js                    logica pura: filtros, parseo, dilucion, puntuacion y orden (sin DOM ni red)
 ├── app.js                       DOM, descarga (fetch a los proxies) y orquestacion multi-ticker
-├── style.css                    estilos (colores ok / nok / na / dilucion-alerta)
+├── style.css                    estilos (ok / nok / na / dilucion-alerta, filas y botones de orden)
 ├── urls_screeners_finviz.csv    screeners predefinidos   (SCREENER|URL)
 └── descripcion_filtros.csv      glosario de campos Finviz (FILTRO|DESCRIPCION)
 tests/
-└── logica.test.js               tests unitarios de docs/logica.js (node --test)
+├── logica.test.js               tests de parseo, dilucion y cola del proxy (docs/logica.js)
+└── orden.test.js                tests de evaluacion de casillas, puntuacion y orden de columnas,
+                                  mas comprobaciones estaticas de index.html / app.js / style.css
 package.json                     solo para poder correr "npm test" (sin dependencias)
 README.md                        resumen para la portada de GitHub
 diseno_funcional.md              este documento hermano: el porque (con referencias)
@@ -57,12 +59,17 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
    1. `descargaDatos(ticker)`: descarga y parsea la ficha de Finviz (`docs/logica.js:extraeDatosMarkdown`).
    2. `compruebaDilucion(ticker)`: resuelve el CIK del ticker en SEC EDGAR (`resuelveCIK`; el fichero completo ticker→CIK se descarga **una sola vez** y se cachea la *promesa*, no el resultado: cachear un objeto vacío mientras llegaba la descarga hacía que todos los tickers menos el primero salieran como "no encontrado") y busca una comparación de acciones en circulación (`buscaDilucionSEC`), probando las etiquetas XBRL de `XBRL_TAGS_SHARES` **hasta encontrar una reciente y coherente** (`docs/logica.js:calculaDilucion` con la fecha de hoy: último dato de hace menos de `ANTIGUEDAD_MAX_DILUCION_DIAS = 550` días, sin ceros y sin caídas de más del 90 %, que son errores de escala del XBRL).
    3. Ninguna de las dos llamadas lanza excepción hacia arriba: un fallo en un ticker (Finviz caído, ticker no listado en SEC, etc.) se registra en el log y ese ticker queda marcado como "sin datos" para Finviz y/o sin alerta de dilución, **sin bloquear a los demás tickers**.
-   4. Cada vez que termina una descarga se **repinta la tabla** con lo que haya llegado: las celdas pendientes muestran `(descargando)` / `(pendiente)` y el resumen indica cuántas faltan. Con 55 tickers la comparación completa tarda unos 7-10 minutos, marcados por el cupo del proxy.
-5. `pintaMultiTicker()` construye la tabla:
-   - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
-   - Primera fila (`pintaFilaDilucion`): el porcentaje de variación de acciones en circulación de cada ticker, dentro de su propia celda — verde (`.ok`) si está por debajo del umbral, rojo (`.dilucion-alerta`) con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, naranja (`.na`) si no hay datos en SEC EDGAR (`N/D`).
-   - Una fila por cada filtro del screener: el valor de la empresa va **dentro** de la celda de su ticker (no en una columna aparte), y el color de esa celda (verde `.ok` / rojo `.nok` / naranja `.na`) es lo que indica `CUMPLE` / `INCUMPLE` / `N/A`.
-6. El resumen final (`#resumen`) muestra una línea por ticker con sus contadores y, si aplica, el aviso de descarte por dilución.
+   4. Cada vez que termina una descarga se **repinta la tabla** (`repinta()`) con lo que haya llegado: las celdas pendientes muestran `(descargando)` / `(pendiente)`. Con 55 tickers la comparación completa tarda unos 7-10 minutos, marcados por el cupo del proxy; el progreso y el balance final van al log.
+5. `pintaMultiTicker(comparacion)` construye la tabla a partir del estado guardado en `comparacionActual` (`{ tickers, filtros, resultadosPorTicker, descripciones }`):
+   1. `ordenaFiltros` (orden económico de `ORDEN`), `evaluaTabla` → `evaluaFiltro` (texto y estado `ok`/`nok`/`na` de cada casilla) y `calculaPuntosPorTicker` → `puntosEmpresa` (+1 verde, 0 naranja, −0,5 roja, −99 si `hayAlertaDilucion`; la dilución en verde o `N/D` no suma). Todo en `logica.js`, sin DOM.
+   2. `ordenaTickers(tickers, puntos, criterioOrden)` decide el orden de las columnas: `ORDEN_ENTRADA` (el del textbox) u `ORDEN_PUNTOS` (de más a menos puntos; a igualdad, orden de entrada). Devuelve una lista nueva: el orden de entrada nunca se modifica.
+   3. Pinta, con ese orden de columnas:
+      - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
+      - Fila `Orden entrada` (`pintaFilaOrdenEntrada`, clase `.fila-orden`, gris claro): posición 1, 2, 3… de cada ticker en el textbox. Solo si `hayVariasEmpresas` (2 o más).
+      - Fila `Orden por filtros cumplidos` (`pintaFilaPuntos`, clase `.fila-puntos`): los puntos de cada ticker.
+      - Fila de dilución (`pintaFilaDilucion` → `celdaDilucion`): verde (`.ok`) por debajo del umbral, rojo (`.dilucion-alerta`) con `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, naranja (`.na`) si no hay datos en SEC EDGAR (`N/D`).
+      - Una fila por filtro (`pintaFilaFiltro`): el valor va **dentro** de la celda de su ticker y el color (verde `.ok` / rojo `.nok` / naranja `.na`) indica `CUMPLE` / `INCUMPLE` / `N/A`.
+6. Botones **Orden entrada** / **Orden por filtros cumplidos** (`#botonesOrden`, bajo "Comparar"): `actualizaBotonesOrden()` los muestra solo con 2 o más tickers y marca el activo (`.activo`, `aria-pressed`). Al pulsar uno, `seleccionaOrden(criterio)` cambia `criterioOrden` y llama a `repinta()`: la tabla se recarga reordenando las columnas **sin volver a descargar nada**. El criterio elegido se mantiene durante las descargas en curso y en las siguientes comparaciones de la sesión (por defecto, orden de entrada).
 
 No hay ejecución programada ni tareas en segundo plano: todo ocurre **bajo demanda**, al pulsar "Comparar". No hay, por tanto, planificación temporal que documentar.
 
@@ -80,7 +87,7 @@ python -m http.server 8000
 npm test
 ```
 
-`package.json` no declara dependencias: `npm test` solo invoca `node --test tests/`, el test runner incorporado en Node desde la v18.
+`package.json` no declara dependencias: `npm test` solo invoca `node --test tests/`, el test runner incorporado en Node desde la v18, que ejecuta todos los `tests/*.test.js`. Sin DOM ni red: la lógica de puntuación y orden está en `logica.js` precisamente para poder probarla así; `tests/orden.test.js` comprueba además, leyendo los ficheros, que los botones de orden están en `index.html`, que no queda rastro de `#resumen` y que `app.js` / `logica.js` siguen en ASCII puro.
 
 ### Añadir un screener nuevo
 

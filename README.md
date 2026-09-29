@@ -15,6 +15,7 @@ Aplicación web estática (HTML + JavaScript, sin backend) que coge **uno o vari
 2. Escribe uno o varios tickers separados por comas (p. ej. `AAPL, MSFT, GOOG`).
 3. Elige un screener predefinido o pega la URL de uno tuyo de Finviz.
 4. Pulsa **Comparar**.
+5. Con dos o más empresas, los botones **Orden entrada** y **Orden por filtros cumplidos** (bajo "Comparar") reordenan las columnas sin volver a descargar nada: en el orden en que las escribiste o de más a menos puntos (+1 por filtro que cumple, 0 sin dato, −0,5 por filtro que incumple, −99 si hay alerta de dilución).
 
 También puedes enlazar directo con los tickers precargados y la comparación ya lanzada (screener por defecto "solventes"), con `?tickers=` en la URL, p. ej. `https://carlostechinnovation.github.io/finviz_analysis/?tickers=AAPL,MSFT,GOOG`. Así es como el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) enlaza su tabla de Selección del día.
 
@@ -30,4 +31,4 @@ python -m http.server 8000
 npm test
 ```
 
-Tests unitarios (`node --test`, sin dependencias) de la lógica pura en [docs/logica.js](docs/logica.js), incluido el caso real de dilución de `BFRI` documentado en [diseno_funcional.md](diseno_funcional.md).
+Tests unitarios (`node --test`, sin dependencias) de la lógica pura en [docs/logica.js](docs/logica.js) —incluido el caso real de dilución de `BFRI` documentado en [diseno_funcional.md](diseno_funcional.md), la puntuación por filtros cumplidos y el orden de columnas— y comprobaciones estáticas de la página.

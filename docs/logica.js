@@ -119,10 +119,20 @@ const XBRL_TAGS_SHARES = [
 /* -------------------------------------------------------------------------
    2) UTILIDADES
    ------------------------------------------------------------------------- */
+/**
+ * Normaliza una etiqueta para compararla sin importar mayusculas ni signos.
+ * @param {*} s Texto de entrada.
+ * @returns {string} Solo letras minusculas y digitos.
+ */
 function normaliza(s) {
     return String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * Colapsa los espacios internos y recorta los bordes.
+ * @param {*} s Texto de entrada.
+ * @returns {string} Texto limpio.
+ */
 function limpia(s) {
     return String(s).replace(/\s+/g, " ").trim();
 }
@@ -137,7 +147,12 @@ const ETIQUETAS_CONOCIDAS = new Set();
     }
 })();
 
-// Convierte "1,234.5", "12.34%", "+3.2%", "3.45T", "-" ... a numero
+/**
+ * Convierte "1,234.5", "12.34%", "+3.2%", "3.45T", "-" ... a numero.
+ * @param {*} txt Valor tal y como llega de Finviz.
+ * @param {boolean} [escala] true para aplicar los sufijos K/M/B/T.
+ * @returns {number} El numero, o NaN si no hay dato.
+ */
 function aNumero(txt, escala) {
     if (txt === undefined || txt === null) return NaN;
     let s = String(txt).trim();
@@ -161,6 +176,13 @@ function aNumero(txt, escala) {
     return n;
 }
 
+/**
+ * Aplica un operador de comparacion de filtro.
+ * @param {number} valor Valor de la empresa.
+ * @param {string} op Uno de ">", ">=", "<", "<=".
+ * @param {number} umbral Umbral del filtro.
+ * @returns {boolean|null} Resultado, o null si el operador no se conoce.
+ */
 function compara(valor, op, umbral) {
     switch (op) {
         case ">":  return valor >  umbral;
@@ -171,7 +193,12 @@ function compara(valor, op, umbral) {
     return null;
 }
 
-// Busca una etiqueta en los datos de la empresa, probando alias y normalizacion
+/**
+ * Busca una etiqueta en los datos de la empresa, probando alias y normalizacion.
+ * @param {Object<string,string>} datos Pares etiqueta -> valor de la ficha.
+ * @param {string} etiqueta Etiqueta de Finviz buscada.
+ * @returns {string|undefined} El valor, o undefined si no aparece.
+ */
 function buscaValor(datos, etiqueta) {
     if (datos[etiqueta] !== undefined) return datos[etiqueta];
 
@@ -186,6 +213,12 @@ function buscaValor(datos, etiqueta) {
     return undefined;
 }
 
+/**
+ * Igual que buscaValor, pero sobre el glosario de descripciones.
+ * @param {Object<string,string>} descripciones Etiqueta -> descripcion.
+ * @param {string} etiqueta Etiqueta de Finviz buscada.
+ * @returns {string} La descripcion, o "" si no hay.
+ */
 function buscaDescripcion(descripciones, etiqueta) {
     if (descripciones[etiqueta]) return descripciones[etiqueta];
     for (const alt of (ALIAS[etiqueta] || [])) {
@@ -209,6 +242,11 @@ function buscaDescripcion(descripciones, etiqueta) {
 // limita a una sola linea y pocos caracteres para no confundirlo con frases
 // sueltas en negrita (p.ej. el precio "**339.08**" o avisos de marketing) que
 // no van precedidas de una etiqueta real.
+/**
+ * Extrae los pares etiqueta -> valor de la ficha de Finviz en markdown.
+ * @param {string} texto Respuesta de r.jina.ai.
+ * @returns {Object<string,string>} Pares encontrados (gana la primera aparicion).
+ */
 function extraeDatosMarkdown(texto) {
     const datos = {};
     const limpio = String(texto).replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
@@ -226,6 +264,11 @@ function extraeDatosMarkdown(texto) {
     return datos;
 }
 
+/**
+ * Cuenta cuantas etiquetas de los datos sabe leer la app (FILTROS + ALIAS).
+ * @param {Object<string,string>} datos Pares etiqueta -> valor.
+ * @returns {number} Numero de etiquetas reconocidas.
+ */
 function cuentaConocidos(datos) {
     let n = 0;
     for (const k of Object.keys(datos)) {
@@ -245,6 +288,11 @@ function cuentaConocidos(datos) {
 // donde depurar el problema en caliente, se extrae el primer objeto JSON
 // valido buscando desde la primera "{" hasta la ultima "}" de la respuesta,
 // en vez de asumir que el cuerpo entero es JSON limpio.
+/**
+ * Extrae el objeto JSON que va entre la primera "{" y la ultima "}".
+ * @param {string} texto Respuesta del proxy.
+ * @returns {Object|null} El objeto, o null si no hay JSON valido.
+ */
 function extraeJSON(texto) {
     const inicio = texto.indexOf("{");
     const fin = texto.lastIndexOf("}");
@@ -263,6 +311,12 @@ function extraeJSON(texto) {
 // fuera del ultimo anio. Tambien descarta ceros y caidas imposibles (errores
 // de escala en el propio XBRL: CPK declaro 23.544 millones de acciones en
 // 2025-08 y 24 millones en 2026-08). Devuelve null si no hay comparacion fiable.
+/**
+ * Calcula la variacion de acciones en circulacion en ~1 anio.
+ * @param {Array<{end:string,val:number}>} puntos Serie XBRL de la SEC.
+ * @param {number|Date} [hoy] Fecha de referencia para descartar datos viejos.
+ * @returns {{pct:number,actual:Object,anterior:Object}|null} Variacion o null.
+ */
 function calculaDilucion(puntos, hoy) {
     if (!Array.isArray(puntos)) return null;
     const validos = puntos
@@ -311,12 +365,21 @@ const PRIORIDAD_SEC = 1;
 // Cola con prioridad que no arranca mas de maxPorVentana tareas en cada
 // ventana deslizante de ventanaMs, ni mas de maxSimultaneas a la vez. A igual
 // prioridad, por orden de llegada. "reloj" solo se inyecta en los tests.
+/**
+ * Crea la cola con cupo por ventana deslizante y maximo de tareas simultaneas.
+ * @param {number} maxPorVentana Arranques maximos por ventana.
+ * @param {number} ventanaMs Duracion de la ventana en ms.
+ * @param {number} maxSimultaneas Tareas en vuelo como maximo.
+ * @param {function():number} [reloj] Reloj inyectable (tests).
+ * @returns {{encola:Function,pausa:Function,pendientes:Function}} La cola.
+ */
 function creaLimitador(maxPorVentana, ventanaMs, maxSimultaneas, reloj) {
     reloj = reloj || Date.now;
     const inicios = [];
     const cola = [];
     let activas = 0, orden = 0, pausaHasta = 0, temporizador = null;
 
+    /** Milisegundos que hay que esperar antes del siguiente arranque. */
     function esperaNecesaria(ahora) {
         while (inicios.length && ahora - inicios[0] >= ventanaMs) inicios.shift();
         let espera = Math.max(0, pausaHasta - ahora);
@@ -326,6 +389,7 @@ function creaLimitador(maxPorVentana, ventanaMs, maxSimultaneas, reloj) {
         return espera;
     }
 
+    /** Arranca todas las tareas que el cupo permita ahora mismo. */
     function bombea() {
         if (temporizador) return;
         while (cola.length && activas < maxSimultaneas) {
@@ -366,12 +430,22 @@ function creaLimitador(maxPorVentana, ventanaMs, maxSimultaneas, reloj) {
 
 // Un fallo merece otro intento si es transitorio: red/timeout (status 0),
 // 408, 429 (cupo del proxy) o 5xx. Un 404 o un 403 no se arreglan insistiendo.
+/**
+ * Indica si un fallo HTTP merece otro intento.
+ * @param {number} status Codigo HTTP (0 = red o timeout).
+ * @returns {boolean} true si es transitorio.
+ */
 function esReintentable(status) {
     return status === 0 || status === 408 || status === 429 || status >= 500;
 }
 
 // r.jina.ai responde HTTP 200 aunque la web de destino falle, y lo avisa en
 // una linea "Warning: Target URL returned error NNN". Devuelve ese NNN, o null.
+/**
+ * Lee el codigo de error del destino que r.jina.ai avisa en su cabecera.
+ * @param {string} texto Respuesta del proxy.
+ * @returns {number|null} Codigo HTTP del destino, o null si no hay aviso.
+ */
 function errorDestinoProxy(texto) {
     const m = /Target URL returned error (\d{3})/.exec(String(texto).slice(0, 2000));
     return m ? parseInt(m[1], 10) : null;
@@ -379,13 +453,158 @@ function errorDestinoProxy(texto) {
 
 // Finviz redirige un ticker inexistente a su pagina de busqueda: el proxy la
 // devuelve con "Title: Search". Es definitivo, no merece reintento.
+/**
+ * Detecta la pagina de busqueda de Finviz (ticker inexistente).
+ * @param {string} texto Respuesta del proxy.
+ * @returns {boolean} true si Finviz no reconoce el ticker.
+ */
 function esBusquedaFinviz(texto) {
     return /^Title:\s*Search\s*$/m.test(String(texto).slice(0, 500));
 }
 
-// Minutos que tardara la cola en despachar n peticiones al ritmo permitido.
+/**
+ * Minutos que tardara la cola en despachar n peticiones al ritmo permitido.
+ * @param {number} nPeticiones Peticiones previstas.
+ * @returns {number} Minutos, como minimo 1.
+ */
 function minutosEstimados(nPeticiones) {
     return Math.max(1, Math.ceil(nPeticiones / PROXY_MAX_POR_MINUTO));
+}
+
+/* -------------------------------------------------------------------------
+   6) EVALUACION DE CASILLAS, PUNTUACION Y ORDEN DE COLUMNAS
+   Cada casilla de filtro vale PUNTOS_POR_ESTADO[estado]. La fila de dilucion
+   solo resta: PUNTOS_ALERTA_DILUCION si hay alerta, 0 en otro caso (ni la
+   dilucion baja ni la N/D suman). Ver diseno_funcional.md SS7.
+   ------------------------------------------------------------------------- */
+const PUNTOS_POR_ESTADO = { ok: 1, na: 0, nok: -0.5 };
+const PUNTOS_ALERTA_DILUCION = -99;
+const ORDEN_ENTRADA = "entrada";
+const ORDEN_PUNTOS = "puntos";
+// Con menos empresas no hay nada que ordenar: se ocultan la fila "Orden
+// entrada" y los botones de orden.
+const MIN_TICKERS_PARA_ORDENAR = 2;
+
+/**
+ * Ordena los codigos de filtro segun ORDEN; los desconocidos van al final.
+ * @param {string[]} filtros Codigos del parametro f= del screener.
+ * @returns {string[]} Codigos en orden de presentacion.
+ */
+function ordenaFiltros(filtros) {
+    return ORDEN.filter(c => filtros.includes(c))
+        .concat(filtros.filter(c => !ORDEN.includes(c)));
+}
+
+/**
+ * Estado de una casilla a partir del valor bruto de la ficha.
+ * @param {string|undefined} bruto Valor tal y como llega de Finviz.
+ * @param {Object} def Definicion del filtro (FILTROS[codigo]).
+ * @returns {string} "ok", "nok" o "na".
+ */
+function estadoDeValor(bruto, def) {
+    const num = aNumero(bruto, def.escala);
+    if (isNaN(num)) return "na";
+    const r = compara(num, def.op, def.valor);
+    if (r === null) return "na";
+    return r ? "ok" : "nok";
+}
+
+/**
+ * Evalua una casilla: un filtro del screener para una empresa.
+ * @param {Object|null|undefined} datos Ficha de la empresa (undefined =
+ *     descarga pendiente, null = descarga fallida).
+ * @param {string} codigo Codigo del filtro.
+ * @returns {{texto:string, estado:string}} Texto a mostrar y estado.
+ */
+function evaluaFiltro(datos, codigo) {
+    if (datos === undefined) return { texto: "(descargando)", estado: "na" };
+    if (!datos) return { texto: "(sin datos)", estado: "na" };
+    const def = FILTROS[codigo];
+    if (!def) return { texto: "N/A", estado: "na" };
+    const bruto = buscaValor(datos, def.finviz);
+    const texto = (bruto === undefined || bruto === "") ? "N/A" : String(bruto);
+    return { texto: texto, estado: estadoDeValor(bruto, def) };
+}
+
+/**
+ * Evalua todas las casillas de filtros de la tabla.
+ * @param {string[]} tickers Empresas.
+ * @param {string[]} codigos Filtros del screener.
+ * @param {Object} resultadosPorTicker ticker -> { datos, dilucion }.
+ * @returns {Object} evaluaciones[codigo][ticker] = { texto, estado }.
+ */
+function evaluaTabla(tickers, codigos, resultadosPorTicker) {
+    const evaluaciones = {};
+    for (const codigo of codigos) {
+        evaluaciones[codigo] = {};
+        for (const t of tickers) {
+            evaluaciones[codigo][t] = evaluaFiltro(resultadosPorTicker[t].datos, codigo);
+        }
+    }
+    return evaluaciones;
+}
+
+/**
+ * Indica si la dilucion de una empresa supera el umbral de alerta.
+ * @param {Object|null|undefined} dilucion Resultado de calculaDilucion.
+ * @returns {boolean} true si hay alerta por dilucion.
+ */
+function hayAlertaDilucion(dilucion) {
+    return !!dilucion && dilucion.pct >= UMBRAL_DILUCION_PCT;
+}
+
+/**
+ * Puntos de una empresa a partir de los estados de sus casillas.
+ * @param {string[]} estados Estados ("ok"/"nok"/"na") de sus filtros.
+ * @param {boolean} alertaDilucion true si su fila de dilucion esta en alerta.
+ * @returns {number} Suma de puntos.
+ */
+function puntosEmpresa(estados, alertaDilucion) {
+    let total = alertaDilucion ? PUNTOS_ALERTA_DILUCION : 0;
+    for (const estado of estados) total += PUNTOS_POR_ESTADO[estado] || 0;
+    return total;
+}
+
+/**
+ * Puntos de cada empresa de la tabla.
+ * @param {string[]} tickers Empresas.
+ * @param {Object} evaluaciones Salida de evaluaTabla.
+ * @param {Object} resultadosPorTicker ticker -> { datos, dilucion }.
+ * @returns {Object<string,number>} ticker -> puntos.
+ */
+function calculaPuntosPorTicker(tickers, evaluaciones, resultadosPorTicker) {
+    const puntos = {};
+    for (const t of tickers) {
+        const estados = Object.keys(evaluaciones).map(c => evaluaciones[c][t].estado);
+        puntos[t] = puntosEmpresa(estados, hayAlertaDilucion(resultadosPorTicker[t].dilucion));
+    }
+    return puntos;
+}
+
+/**
+ * Orden de las columnas de empresas segun el criterio elegido.
+ * ORDEN_ENTRADA respeta el textbox; ORDEN_PUNTOS ordena de mas a menos
+ * puntos y, a igualdad, por orden de entrada.
+ * @param {string[]} tickers Empresas en orden de entrada.
+ * @param {Object<string,number>} puntos ticker -> puntos.
+ * @param {string} criterio ORDEN_ENTRADA u ORDEN_PUNTOS.
+ * @returns {string[]} Nueva lista ordenada (no modifica la de entrada).
+ */
+function ordenaTickers(tickers, puntos, criterio) {
+    if (criterio !== ORDEN_PUNTOS) return tickers.slice();
+    return tickers
+        .map((t, i) => ({ t: t, i: i }))
+        .sort((a, b) => (puntos[b.t] - puntos[a.t]) || (a.i - b.i))
+        .map(x => x.t);
+}
+
+/**
+ * Indica si hay empresas suficientes para mostrar la fila y botones de orden.
+ * @param {number} nTickers Numero de empresas comparadas.
+ * @returns {boolean} true si son MIN_TICKERS_PARA_ORDENAR o mas.
+ */
+function hayVariasEmpresas(nTickers) {
+    return nTickers >= MIN_TICKERS_PARA_ORDENAR;
 }
 
 // Guard para poder usar require("./logica.js") desde tests/ con Node, sin
@@ -400,6 +619,9 @@ if (typeof module !== "undefined" && module.exports) {
         extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
         PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS, PROXY_MAX_INTENTOS,
         PROXY_PAUSA_429_MS, PRIORIDAD_FINVIZ, PRIORIDAD_SEC,
-        creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados
+        creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados,
+        PUNTOS_POR_ESTADO, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
+        ordenaFiltros, estadoDeValor, evaluaFiltro, evaluaTabla, hayAlertaDilucion,
+        puntosEmpresa, calculaPuntosPorTicker, ordenaTickers, hayVariasEmpresas
     };
 }
