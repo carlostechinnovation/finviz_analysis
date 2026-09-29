@@ -104,6 +104,12 @@ const ALIAS = {
 // alerta como falso positivo.
 const UMBRAL_DILUCION_PCT = 20;         // % de aumento en ~1 anio = dilucion fuerte
 const TOLERANCIA_DILUCION_DIAS = 120;   // margen para localizar el dato de "hace 1 anio"
+// El dato mas reciente no puede tener mas de ~18 meses: un 10-K anual mas el
+// plazo de presentacion. Mas viejo es una etiqueta XBRL abandonada, no "hoy".
+const ANTIGUEDAD_MAX_DILUCION_DIAS = 550;
+// Una recompra no reduce el 90% de las acciones en un anio: eso es un error de
+// escala en el XBRL (miles frente a unidades), no un dato.
+const CAIDA_MAX_CREIBLE_PCT = -90;
 const XBRL_TAGS_SHARES = [
     "us-gaap/CommonStockSharesOutstanding",
     "dei/EntityCommonStockSharesOutstanding",
@@ -251,14 +257,25 @@ function extraeJSON(texto) {
 }
 
 // Compara el ultimo dato disponible con el mas cercano a "hace 1 anio".
-function calculaDilucion(puntos) {
+// Con "hoy" (ms o Date), exige ademas que el ultimo dato sea reciente: una
+// empresa que dejo de usar esa etiqueta XBRL hace anios (p.ej. al pasar a
+// informar por clase de accion) devolvia una "dilucion" de 2010-2011 como si
+// fuera del ultimo anio. Tambien descarta ceros y caidas imposibles (errores
+// de escala en el propio XBRL: CPK declaro 23.544 millones de acciones en
+// 2025-08 y 24 millones en 2026-08). Devuelve null si no hay comparacion fiable.
+function calculaDilucion(puntos, hoy) {
+    if (!Array.isArray(puntos)) return null;
     const validos = puntos
-        .filter(p => p && p.end && typeof p.val === "number")
+        .filter(p => p && p.end && typeof p.val === "number" && p.val > 0)
         .sort((a, b) => new Date(a.end) - new Date(b.end));
     if (validos.length < 2) return null;
 
     const actual = validos[validos.length - 1];
     const fechaActual = new Date(actual.end);
+    if (hoy !== undefined &&
+        new Date(hoy).getTime() - fechaActual.getTime() > ANTIGUEDAD_MAX_DILUCION_DIAS * 24 * 3600 * 1000) {
+        return null;
+    }
     const objetivoMs = fechaActual.getTime() - 365 * 24 * 3600 * 1000;
 
     let anterior = null, mejorDist = Infinity;
@@ -271,7 +288,104 @@ function calculaDilucion(puntos) {
     if (anterior.val <= 0) return null;
 
     const pct = ((actual.val - anterior.val) / anterior.val) * 100;
+    if (pct <= CAIDA_MAX_CREIBLE_PCT) return null;
     return { pct: pct, actual: actual, anterior: anterior };
+}
+
+/* -------------------------------------------------------------------------
+   5) LIMITE DE PETICIONES AL PROXY Y REINTENTOS
+   r.jina.ai sin clave admite 20 peticiones por minuto y por IP (cabecera
+   "x-ratelimit-limit: 20, 20;w=60", comprobada el 2026-09-29). Lanzar las
+   fichas de 55 tickers a la vez devolvia HTTP 429 a 35 de ellas: los datos
+   existian en Finviz, era el proxy el que las rechazaba. Todas las llamadas al
+   proxy pasan por una unica cola que respeta ese cupo con margen.
+   ------------------------------------------------------------------------- */
+const PROXY_MAX_POR_MINUTO = 18;      // cupo real 20/min: se deja margen
+const PROXY_VENTANA_MS = 60000;
+const PROXY_MAX_SIMULTANEAS = 4;
+const PROXY_MAX_INTENTOS = 4;
+const PROXY_PAUSA_429_MS = 30000;     // si aun asi llega un 429, se para la cola
+const PRIORIDAD_FINVIZ = 0;           // las fichas antes que la dilucion (SEC)
+const PRIORIDAD_SEC = 1;
+
+// Cola con prioridad que no arranca mas de maxPorVentana tareas en cada
+// ventana deslizante de ventanaMs, ni mas de maxSimultaneas a la vez. A igual
+// prioridad, por orden de llegada. "reloj" solo se inyecta en los tests.
+function creaLimitador(maxPorVentana, ventanaMs, maxSimultaneas, reloj) {
+    reloj = reloj || Date.now;
+    const inicios = [];
+    const cola = [];
+    let activas = 0, orden = 0, pausaHasta = 0, temporizador = null;
+
+    function esperaNecesaria(ahora) {
+        while (inicios.length && ahora - inicios[0] >= ventanaMs) inicios.shift();
+        let espera = Math.max(0, pausaHasta - ahora);
+        if (inicios.length >= maxPorVentana) {
+            espera = Math.max(espera, inicios[0] + ventanaMs - ahora);
+        }
+        return espera;
+    }
+
+    function bombea() {
+        if (temporizador) return;
+        while (cola.length && activas < maxSimultaneas) {
+            const ahora = reloj();
+            const espera = esperaNecesaria(ahora);
+            if (espera > 0) {
+                temporizador = setTimeout(() => { temporizador = null; bombea(); }, espera);
+                return;
+            }
+            cola.sort((a, b) => a.prioridad - b.prioridad || a.orden - b.orden);
+            const tarea = cola.shift();
+            inicios.push(ahora);
+            activas++;
+            // Se libera el hueco ANTES de avisar a quien espera la tarea.
+            const libera = () => { activas--; bombea(); };
+            Promise.resolve()
+                .then(tarea.fn)
+                .then(v => { libera(); tarea.resolve(v); },
+                      e => { libera(); tarea.reject(e); });
+        }
+    }
+
+    return {
+        encola(fn, prioridad) {
+            return new Promise((resolve, reject) => {
+                cola.push({ fn: fn, prioridad: prioridad || 0, orden: orden++, resolve: resolve, reject: reject });
+                bombea();
+            });
+        },
+        pausa(ms) {
+            pausaHasta = Math.max(pausaHasta, reloj() + ms);
+        },
+        pendientes() {
+            return cola.length + activas;
+        }
+    };
+}
+
+// Un fallo merece otro intento si es transitorio: red/timeout (status 0),
+// 408, 429 (cupo del proxy) o 5xx. Un 404 o un 403 no se arreglan insistiendo.
+function esReintentable(status) {
+    return status === 0 || status === 408 || status === 429 || status >= 500;
+}
+
+// r.jina.ai responde HTTP 200 aunque la web de destino falle, y lo avisa en
+// una linea "Warning: Target URL returned error NNN". Devuelve ese NNN, o null.
+function errorDestinoProxy(texto) {
+    const m = /Target URL returned error (\d{3})/.exec(String(texto).slice(0, 2000));
+    return m ? parseInt(m[1], 10) : null;
+}
+
+// Finviz redirige un ticker inexistente a su pagina de busqueda: el proxy la
+// devuelve con "Title: Search". Es definitivo, no merece reintento.
+function esBusquedaFinviz(texto) {
+    return /^Title:\s*Search\s*$/m.test(String(texto).slice(0, 500));
+}
+
+// Minutos que tardara la cola en despachar n peticiones al ritmo permitido.
+function minutosEstimados(nPeticiones) {
+    return Math.max(1, Math.ceil(nPeticiones / PROXY_MAX_POR_MINUTO));
 }
 
 // Guard para poder usar require("./logica.js") desde tests/ con Node, sin
@@ -280,8 +394,12 @@ if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         FILTROS, ORDEN, ALIAS,
         UMBRAL_DILUCION_PCT, TOLERANCIA_DILUCION_DIAS, XBRL_TAGS_SHARES,
+        ANTIGUEDAD_MAX_DILUCION_DIAS, CAIDA_MAX_CREIBLE_PCT,
         ETIQUETAS_CONOCIDAS,
         normaliza, limpia, aNumero, compara, buscaValor, buscaDescripcion,
-        extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion
+        extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
+        PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS, PROXY_MAX_INTENTOS,
+        PROXY_PAUSA_429_MS, PRIORIDAD_FINVIZ, PRIORIDAD_SEC,
+        creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados
     };
 }

@@ -16,8 +16,10 @@ navegador  --fetch-->  https://r.jina.ai/https://data.sec.gov/api/xbrl/companyco
                                    de r.jina.ai, ver logica.js:extraeJSON)
 ```
 
-- **Por qué un proxy**: GitHub Pages no puede llamar a `finviz.com` ni a `data.sec.gov` directamente por CORS, y no hay backend propio. Se usa `r.jina.ai`, que renderiza la página en su servidor y la devuelve con CORS abierto. Una llamada por recurso, sin reintentos, con **timeout de 20 s** (`TIMEOUT_MS` en `app.js`).
-- **Sin claves ni cuotas gestionadas por esta app**: al depender de un proxy público de terceros, la disponibilidad y los límites de uso no están bajo control del proyecto (ver [§5](#5-limitaciones-técnicas-conocidas)).
+- **Por qué un proxy**: GitHub Pages no puede llamar a `finviz.com` ni a `data.sec.gov` directamente por CORS (comprobado: `data.sec.gov` no devuelve `Access-Control-Allow-Origin` en sus respuestas JSON), y no hay backend propio. Se usa `r.jina.ai`, que renderiza la página en su servidor y la devuelve con CORS abierto. **Timeout de 30 s** por llamada (`TIMEOUT_MS` en `app.js`).
+- **Cupo del proxy: 20 peticiones/minuto por IP** sin clave (cabecera `x-ratelimit-limit: 20, 20;w=60`, comprobada el 2026-09-29). Todas las llamadas pasan por **una única cola** (`creaLimitador` en `logica.js`) que no arranca más de `PROXY_MAX_POR_MINUTO = 18` peticiones por ventana deslizante de 60 s ni más de `PROXY_MAX_SIMULTANEAS = 4` a la vez, con **prioridad para las fichas de Finviz** sobre las consultas a SEC EDGAR. Antes de esta cola, abrir los 55 tickers del email de DIIA lanzaba las 55 fichas a la vez y el proxy devolvía **HTTP 429 a 35 de ellas**: los datos existían en Finviz, era el proxy el que las rechazaba.
+- **Reintentos** (`pideAlProxy` en `app.js`, hasta `PROXY_MAX_INTENTOS = 4`): se reintenta lo transitorio — red o timeout, HTTP 408/429/5xx, respuesta vacía o con menos de `MIN_CAMPOS_VALIDOS` campos (el proxy devuelve a veces la ficha vacía y a la siguiente llamada completa). Un 429 además **pausa toda la cola 30 s**. No se reintenta lo definitivo: un ticker que Finviz no reconoce (el proxy devuelve su página de búsqueda, `Title: Search`) o un 404 del destino, que `r.jina.ai` entrega como HTTP 200 con la línea `Warning: Target URL returned error 404`.
+- **Sin claves gestionadas por esta app**: al depender de un proxy público de terceros, su disponibilidad no está bajo control del proyecto (ver [§5](#5-limitaciones-técnicas-conocidas)).
 
 ## 2. Estructura del repositorio
 
@@ -51,10 +53,11 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
 1. El usuario escribe uno o varios tickers separados por comas en el campo "Ticker de empresas" y elige un screener (o pega una URL).
 2. `leeTickers()` (`app.js`) separa por comas, recorta espacios, pasa a mayúsculas y elimina duplicados y vacíos.
 3. `leeFiltrosScreener()` extrae los códigos de filtro del parámetro `f=` de la URL del screener.
-4. Para **cada ticker**, en paralelo (`Promise.all`):
+4. Para **cada ticker** se encolan sus tareas (`Promise.all`), que la cola del proxy despacha al ritmo permitido (§1):
    1. `descargaDatos(ticker)`: descarga y parsea la ficha de Finviz (`docs/logica.js:extraeDatosMarkdown`).
-   2. `compruebaDilucion(ticker)`: resuelve el CIK del ticker en SEC EDGAR (`resuelveCIK`, con caché en memoria del fichero completo ticker→CIK), descarga el histórico de acciones en circulación (`descargaHistoricoShares`, probando varias etiquetas XBRL) y calcula la variación en ~1 año (`docs/logica.js:calculaDilucion`).
+   2. `compruebaDilucion(ticker)`: resuelve el CIK del ticker en SEC EDGAR (`resuelveCIK`; el fichero completo ticker→CIK se descarga **una sola vez** y se cachea la *promesa*, no el resultado: cachear un objeto vacío mientras llegaba la descarga hacía que todos los tickers menos el primero salieran como "no encontrado") y busca una comparación de acciones en circulación (`buscaDilucionSEC`), probando las etiquetas XBRL de `XBRL_TAGS_SHARES` **hasta encontrar una reciente y coherente** (`docs/logica.js:calculaDilucion` con la fecha de hoy: último dato de hace menos de `ANTIGUEDAD_MAX_DILUCION_DIAS = 550` días, sin ceros y sin caídas de más del 90 %, que son errores de escala del XBRL).
    3. Ninguna de las dos llamadas lanza excepción hacia arriba: un fallo en un ticker (Finviz caído, ticker no listado en SEC, etc.) se registra en el log y ese ticker queda marcado como "sin datos" para Finviz y/o sin alerta de dilución, **sin bloquear a los demás tickers**.
+   4. Cada vez que termina una descarga se **repinta la tabla** con lo que haya llegado: las celdas pendientes muestran `(descargando)` / `(pendiente)` y el resumen indica cuántas faltan. Con 55 tickers la comparación completa tarda unos 7-10 minutos, marcados por el cupo del proxy.
 5. `pintaMultiTicker()` construye la tabla:
    - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
    - Primera fila (`pintaFilaDilucion`): el porcentaje de variación de acciones en circulación de cada ticker, dentro de su propia celda — verde (`.ok`) si está por debajo del umbral, rojo (`.dilucion-alerta`) con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, naranja (`.na`) si no hay datos en SEC EDGAR (`N/D`).
@@ -91,9 +94,11 @@ La app solo mira el parámetro `f=` de la URL; el resto (`v`, `o`, `p`, `ft`) se
 
 ## 5. Limitaciones técnicas conocidas
 
-- **Dependencia de un proxy de terceros (`r.jina.ai`).** Si está caído, saturado o cambia el formato de salida, la descarga falla. No hay reintentos. Con varios tickers a la vez se lanzan varias peticiones en paralelo al mismo proxy público, sin límite explícito de concurrencia (decisión de diseño: se prioriza la simplicidad sobre la protección frente a saturación del proxy gratuito).
+- **Dependencia de un proxy de terceros (`r.jina.ai`).** Si está caído o cambia el formato de salida, la descarga falla aunque se reintente. Su cupo (20 peticiones/minuto por IP) fija la duración de una comparación grande: no se puede acelerar sin una clave de pago, que no puede ir en una web pública.
 - **El parseo de Finviz es frágil por naturaleza.** Se basa en el texto renderizado de la ficha; cualquier cambio de maquetación puede romperlo. El umbral de 8 campos reconocidos (`MIN_CAMPOS_VALIDOS`) existe para detectarlo y avisar en vez de dar resultados falsos.
 - **El JSON de SEC EDGAR llega envuelto** en metadatos que añade `r.jina.ai` (`Title:`, `URL Source:`, `Markdown Content:`) porque ese proxy está pensado para HTML, no para JSON. `logica.js:extraeJSON` extrae el primer objeto `{...}` de la respuesta en vez de asumir que el cuerpo entero es JSON limpio; si el proxy además reformatea el contenido interno del JSON, el parseo puede fallar igualmente (se degrada sin romper el resto de la comparación).
 - **Codificación ASCII pura en `app.js` y `logica.js`.** Los acentos y símbolos van como escapes `\uXXXX` dentro de las cadenas, para que ningún editor los corrompa al guardar en otra codificación. Al editar estos ficheros a mano hay que mantener esa convención.
 - **Sin caché ni histórico.** Cada comparación vuelve a descargar todo; no hay seguimiento de la evolución de una empresa entre comparaciones.
-- **Sin límite de tickers simultáneos.** Cada ticker añadido multiplica el número de peticiones de red (1 a Finviz + hasta 3 a SEC EDGAR, esta última cacheada la parte de ticker→CIK). Es responsabilidad de quien usa la herramienta no abusar del proxy público.
+- **Coste por ticker.** Cada ticker cuesta 1 petición a Finviz y de 1 a 3 a SEC EDGAR (más una única para el mapeo ticker→CIK). La cola evita el 429, pero el tiempo total crece lineal con el número de tickers.
+- **Tickers que Finviz no cubre.** Algunas clases de acción cotizan pero no tienen ficha en Finviz (p. ej. `RUSHB`: `finviz.com` responde 404; sí existe `RUSHA`). Se muestran como "sin datos" tras un único intento.
+- **Empresas con varias clases de acción** suelen salir `N/D` en dilución: informan las acciones por clase (dato dimensional) y la API `companyconcept` de la SEC solo devuelve los datos sin dimensión.

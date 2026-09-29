@@ -49,7 +49,7 @@ const SCREENERS_RESPALDO =
 // Tiempo maximo de espera a la llamada. r.jina.ai renderiza la pagina en su
 // servidor antes de responder, lo que tarda varios segundos; sin este limite
 // una caida del servicio dejaria la pagina esperando indefinidamente.
-const TIMEOUT_MS = 20000;
+const TIMEOUT_MS = 30000;
 // Minimo de etiquetas reconocidas para dar por buena una descarga.
 const MIN_CAMPOS_VALIDOS = 8;
 
@@ -61,57 +61,87 @@ function logMsg(msg) {
 /* -------------------------------------------------------------------------
    DESCARGA VIA PROXY CORS
    GitHub Pages no puede llamar a finviz.com directamente (CORS) y no hay
-   backend propio, asi que se usa un unico proxy publico con una unica
-   llamada web por ticker (sin reintentos). r.jina.ai renderiza la pagina en
-   su servidor y la devuelve como texto/markdown con cabeceras CORS abiertas.
+   backend propio, asi que se usa un proxy publico: r.jina.ai renderiza la
+   pagina en su servidor y la devuelve como texto/markdown con CORS abierto.
+   Ese proxy admite 20 peticiones/minuto por IP, asi que TODAS las llamadas
+   pasan por una unica cola (creaLimitador, en logica.js) y los fallos
+   transitorios (429, 5xx, timeout, respuesta vacia) se reintentan.
    ------------------------------------------------------------------------- */
+const limitadorProxy = creaLimitador(PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS);
+
 function construyeURLProxy(objetivo) {
     return "https://r.jina.ai/" + objetivo;
 }
 
-async function fetchConTimeout(url, ms) {
+// Descarga el cuerpo completo con un limite de tiempo que cubre tambien la
+// lectura del cuerpo, no solo la llegada de las cabeceras. Nunca lanza.
+async function descargaTexto(url, ms) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
     try {
-        return await fetch(url, { cache: "no-store", signal: ctrl.signal, redirect: "follow" });
+        const resp = await fetch(url, { cache: "no-store", signal: ctrl.signal, redirect: "follow" });
+        if (!resp.ok) return { status: resp.status };
+        return { status: resp.status, texto: await resp.text() };
+    } catch (e) {
+        return { status: 0, motivo: e.name === "AbortError" ? "timeout " + (ms / 1000) + "s" : e.message };
     } finally {
         clearTimeout(id);
     }
 }
 
-// Descarga la ficha de Finviz para el ticker con una unica llamada web.
-async function descargaDatos(ticker) {
-    const objetivo = "https://finviz.com/quote.ashx?t=" + ticker + "&p=d";
+// Pide "objetivo" a traves del proxy, respetando el cupo y reintentando lo
+// transitorio. "valida(texto)" devuelve null si la respuesta sirve, o
+// { motivo, definitivo } si no. Devuelve el texto, o null si no hubo manera.
+// Con opciones.silencioso no se anotan los fallos definitivos (p.ej. el 404 de
+// una etiqueta XBRL que la empresa no usa: es lo esperable, no un error).
+async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
     const url = construyeURLProxy(objetivo);
-
-    logMsg("Descargando datos de " + ticker + " (timeout " + (TIMEOUT_MS / 1000) + "s)...");
-
-    let resp;
-    try {
-        resp = await fetchConTimeout(url, TIMEOUT_MS);
-    } catch (e) {
-        const motivo = e.name === "AbortError" ? "timeout " + (TIMEOUT_MS / 1000) + "s" : e.message;
-        logMsg("  [" + ticker + "] [FALLO] " + motivo);
-        return null;
+    let motivo = "";
+    for (let intento = 1; intento <= PROXY_MAX_INTENTOS; intento++) {
+        const r = await limitadorProxy.encola(() => descargaTexto(url, TIMEOUT_MS), prioridad);
+        let definitivo = false;
+        if (r.texto !== undefined) {
+            const fallo = valida ? valida(r.texto) : null;
+            if (!fallo) return r.texto;
+            motivo = fallo.motivo;
+            definitivo = !!fallo.definitivo;
+        } else {
+            motivo = r.motivo || ("HTTP " + r.status);
+            definitivo = !esReintentable(r.status);
+            if (r.status === 429) limitadorProxy.pausa(PROXY_PAUSA_429_MS);
+        }
+        if (definitivo) {
+            if (!(opciones && opciones.silencioso)) logMsg("  [" + etiqueta + "] [FALLO] " + motivo);
+            return null;
+        }
+        if (intento < PROXY_MAX_INTENTOS) {
+            logMsg("  [" + etiqueta + "] intento " + intento + " fallido (" + motivo + "); se reintenta.");
+        }
     }
+    logMsg("  [" + etiqueta + "] [FALLO] " + motivo + " (tras " + PROXY_MAX_INTENTOS + " intentos)");
+    return null;
+}
 
-    if (!resp.ok) {
-        logMsg("  [" + ticker + "] [FALLO] HTTP " + resp.status);
-        return null;
-    }
+// Descarga la ficha de Finviz del ticker.
+async function descargaDatos(ticker) {
+    const objetivo = "https://finviz.com/quote.ashx?t=" + encodeURIComponent(ticker) + "&p=d";
+    let datos = null, validos = 0;
 
-    const cuerpo = await resp.text();
-    if (!cuerpo || cuerpo.length < 200) {
-        logMsg("  [" + ticker + "] [FALLO] respuesta vacia");
+    const texto = await pideAlProxy(objetivo, ticker, PRIORIDAD_FINVIZ, (cuerpo) => {
+        if (esBusquedaFinviz(cuerpo)) return { motivo: "Finviz no reconoce el ticker", definitivo: true };
+        const errorDestino = errorDestinoProxy(cuerpo);
+        if (errorDestino) {
+            return { motivo: "Finviz respondio HTTP " + errorDestino, definitivo: !esReintentable(errorDestino) };
+        }
+        if (!cuerpo || cuerpo.length < 200) return { motivo: "respuesta vacia" };
+        datos = extraeDatosMarkdown(cuerpo);
+        validos = cuentaConocidos(datos);
+        if (validos < MIN_CAMPOS_VALIDOS) {
+            return { motivo: "solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)" };
+        }
         return null;
-    }
-
-    const datos = extraeDatosMarkdown(cuerpo);
-    const validos = cuentaConocidos(datos);
-    if (validos < MIN_CAMPOS_VALIDOS) {
-        logMsg("  [" + ticker + "] [FALLO] solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)");
-        return null;
-    }
+    });
+    if (texto === null) return null;
 
     logMsg("  [" + ticker + "] [OK] " + validos + " campos reconocidos");
     return { datos: datos, validos: validos };
@@ -122,46 +152,68 @@ async function descargaDatos(ticker) {
    ------------------------------------------------------------------------- */
 
 // Mapeo ticker -> CIK. Se descarga una unica vez por sesion (fichero de la
-// SEC con todas las empresas) y se cachea en memoria.
-let tickerCikCache = null;
-async function resuelveCIK(ticker) {
-    if (!tickerCikCache) {
-        tickerCikCache = {};
-        try {
-            const resp = await fetchConTimeout(
-                construyeURLProxy("https://www.sec.gov/files/company_tickers.json"), TIMEOUT_MS);
-            const json = extraeJSON(await resp.text());
-            if (!json) throw new Error("respuesta sin JSON reconocible");
+// SEC con todas las empresas). Se cachea la PROMESA, no el resultado: con
+// varios tickers a la vez, cachear un objeto vacio mientras llegaba la
+// descarga hacia que todos menos el primero vieran el mapeo "cargado" y
+// vacio, y salian como "ticker no encontrado". Si la descarga falla, se
+// olvida la promesa para que la siguiente comparacion lo vuelva a intentar.
+let promesaMapeoCIK = null;
+function cargaMapeoCIK() {
+    if (!promesaMapeoCIK) {
+        promesaMapeoCIK = (async () => {
+            const texto = await pideAlProxy("https://www.sec.gov/files/company_tickers.json",
+                "SEC mapeo CIK", PRIORIDAD_SEC,
+                (cuerpo) => extraeJSON(cuerpo) ? null : { motivo: "respuesta sin JSON reconocible" });
+            const json = texto === null ? null : extraeJSON(texto);
+            if (!json) {
+                promesaMapeoCIK = null;
+                return null;
+            }
+            const mapeo = {};
             for (const clave of Object.keys(json)) {
                 const item = json[clave];
                 if (item && item.ticker && item.cik_str !== undefined) {
-                    tickerCikCache[String(item.ticker).toUpperCase()] = String(item.cik_str).padStart(10, "0");
+                    mapeo[String(item.ticker).toUpperCase()] = String(item.cik_str).padStart(10, "0");
                 }
             }
-        } catch (e) {
-            logMsg("Dilucion: no se pudo descargar el mapeo ticker->CIK de SEC EDGAR (" + e.message + ")");
-        }
+            return mapeo;
+        })();
     }
-    return tickerCikCache[ticker.toUpperCase()] || null;
+    return promesaMapeoCIK;
 }
 
-// Descarga el historico de acciones en circulacion desde la API XBRL de la
-// SEC, probando varias etiquetas contables porque no todas las empresas
-// informan bajo la misma (algunas usan dei:EntityCommonStockSharesOutstanding
-// en vez de us-gaap:CommonStockSharesOutstanding).
-async function descargaHistoricoShares(cik) {
+// Devuelve el CIK, "" si SEC no lista el ticker, o null si no hay mapeo.
+async function resuelveCIK(ticker) {
+    const mapeo = await cargaMapeoCIK();
+    if (!mapeo) return null;
+    // SEC escribe las clases con guion (BRK-B); Finviz, a veces con punto.
+    return mapeo[ticker.toUpperCase()] || mapeo[ticker.toUpperCase().replace(".", "-")] || "";
+}
+
+// Busca en la API XBRL de la SEC una comparacion de acciones en circulacion
+// reciente y coherente, probando varias etiquetas contables porque no todas
+// las empresas informan bajo la misma (algunas usan
+// dei:EntityCommonStockSharesOutstanding en vez de
+// us-gaap:CommonStockSharesOutstanding, y otras dejaron de usar una hace anios).
+// Si una etiqueta no da una comparacion valida (no existe -> 404 del destino,
+// datos viejos, sin dos fechas separadas ~1 anio, error de escala) se pasa a
+// la siguiente. Devuelve { r, ruta } o null.
+async function buscaDilucionSEC(cik, ticker) {
     for (const ruta of XBRL_TAGS_SHARES) {
         const objetivo = "https://data.sec.gov/api/xbrl/companyconcept/CIK" + cik + "/" + ruta + ".json";
-        try {
-            const resp = await fetchConTimeout(construyeURLProxy(objetivo), TIMEOUT_MS);
-            if (!resp.ok) continue;
-            const json = extraeJSON(await resp.text());
-            if (!json) continue;
-            const puntos = (json.units && json.units.shares) || [];
-            if (puntos.length >= 2) return puntos;
-        } catch (e) {
-            // Prueba con la siguiente etiqueta XBRL de la lista
-        }
+        const texto = await pideAlProxy(objetivo, ticker + " SEC " + ruta, PRIORIDAD_SEC, (cuerpo) => {
+            const errorDestino = errorDestinoProxy(cuerpo);
+            if (errorDestino) {
+                return { motivo: "SEC respondio HTTP " + errorDestino, definitivo: !esReintentable(errorDestino) };
+            }
+            return extraeJSON(cuerpo) ? null : { motivo: "respuesta sin JSON reconocible" };
+        }, { silencioso: true });
+        const json = texto === null ? null : extraeJSON(texto);
+        // La SEC devuelve a veces "shares": {} (objeto vacio, no lista): se trata como sin datos.
+        const shares = json && json.units && json.units.shares;
+        const puntos = Array.isArray(shares) ? shares : [];
+        const r = calculaDilucion(puntos, Date.now());
+        if (r) return { r: r, ruta: ruta };
     }
     return null;
 }
@@ -172,22 +224,25 @@ async function descargaHistoricoShares(cik) {
 async function compruebaDilucion(ticker) {
     try {
         const cik = await resuelveCIK(ticker);
+        if (cik === null) {
+            logMsg("  [" + ticker + "] Dilucion: no se pudo descargar el mapeo ticker->CIK de SEC EDGAR.");
+            return null;
+        }
         if (!cik) {
             logMsg("  [" + ticker + "] Dilucion: ticker no encontrado en el mapeo CIK de SEC EDGAR.");
             return null;
         }
-        const puntos = await descargaHistoricoShares(cik);
-        if (!puntos) {
-            logMsg("  [" + ticker + "] Dilucion: SEC EDGAR no tiene historico de acciones en circulacion.");
+        const hallado = await buscaDilucionSEC(cik, ticker);
+        if (!hallado) {
+            logMsg("  [" + ticker + "] Dilucion: SEC EDGAR no tiene un historico reciente y coherente de " +
+                   "acciones en circulacion (probadas " + XBRL_TAGS_SHARES.length + " etiquetas XBRL; " +
+                   "habitual en empresas con varias clases de accion).");
             return null;
         }
-        const r = calculaDilucion(puntos);
-        if (!r) {
-            logMsg("  [" + ticker + "] Dilucion: no hay dos periodos separados ~1 anio para comparar.");
-            return null;
-        }
-        logMsg("  [" + ticker + "] Dilucion: acciones en circulacion " + r.anterior.val.toLocaleString() +
-               " (" + r.anterior.end + ") -> " + r.actual.val.toLocaleString() + " (" + r.actual.end + ") = " +
+        const r = hallado.r;
+        logMsg("  [" + ticker + "] Dilucion (" + hallado.ruta + "): acciones en circulacion " +
+               r.anterior.val.toLocaleString() + " (" + r.anterior.end + ") -> " +
+               r.actual.val.toLocaleString() + " (" + r.actual.end + ") = " +
                (r.pct >= 0 ? "+" : "") + r.pct.toFixed(1) + "%");
         return r;
     } catch (e) {
@@ -317,10 +372,14 @@ function pintaCabecera(tickers) {
 
 // Primera fila de la tabla: aviso de dilucion (independiente del screener).
 // Cada celda muestra el porcentaje de esa empresa: verde si esta por debajo
-// del umbral, rojo con el aviso si lo supera, naranja si no hay datos.
+// del umbral, rojo con el aviso si lo supera, naranja si no hay datos o si
+// todavia no ha llegado (dilucion === undefined).
 function pintaFilaDilucion(tickers, resultadosPorTicker) {
     const celdasTicker = tickers.map(t => {
         const d = resultadosPorTicker[t].dilucion;
+        if (d === undefined) {
+            return '<td class="na">' + textoPlano("(pendiente)") + "</td>";
+        }
         if (!d) {
             return '<td class="na">N/D</td>';
         }
@@ -344,9 +403,11 @@ function pintaFilaDilucion(tickers, resultadosPorTicker) {
     resultsTable.appendChild(tr);
 }
 
-async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
-    const descripciones = await loadDescriptions();
-
+// Pinta la tabla con lo que haya llegado hasta ahora. Se llama cada vez que
+// termina una descarga, asi la tabla se va rellenando mientras la cola del
+// proxy despacha el resto. En resultadosPorTicker[t], datos/dilucion valen
+// undefined mientras estan pendientes y null si la descarga fallo.
+function pintaMultiTicker(tickers, filtros, resultadosPorTicker, descripciones) {
     pintaCabecera(tickers);
     resultsTable.innerHTML = "";
     pintaFilaDilucion(tickers, resultadosPorTicker);
@@ -364,6 +425,7 @@ async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
 
         const porTicker = tickers.map(t => {
             const datos = resultadosPorTicker[t].datos;
+            if (datos === undefined) return { texto: "(descargando)", estado: "na" };
             if (!datos) return { texto: "(sin datos)", estado: "na" };
 
             const bruto = def ? buscaValor(datos, etiqueta) : undefined;
@@ -401,19 +463,32 @@ async function pintaMultiTicker(tickers, filtros, resultadosPorTicker) {
         resultsTable.appendChild(tr);
     }
 
-    const lineas = tickers.map(t => {
-        if (!resultadosPorTicker[t].datos) {
-            return t + ": sin datos (fall\u00f3 la descarga de Finviz).";
+    const pendientesFinviz = tickers.filter(t => resultadosPorTicker[t].datos === undefined).length;
+    const pendientesSEC = tickers.filter(t => resultadosPorTicker[t].dilucion === undefined).length;
+    const lineas = [];
+    if (pendientesFinviz || pendientesSEC) {
+        lineas.push("En curso: faltan " + pendientesFinviz + " ficha(s) de Finviz y " + pendientesSEC +
+            " comprobaci\u00f3n(es) de diluci\u00f3n. El proxy admite " + PROXY_MAX_POR_MINUTO +
+            " peticiones/minuto, as\u00ed que la tabla se va completando sola.");
+    }
+    for (const t of tickers) {
+        const datos = resultadosPorTicker[t].datos;
+        if (datos === undefined) {
+            lineas.push(t + ": descargando...");
+            continue;
+        }
+        if (!datos) {
+            lineas.push(t + ": sin datos (fall\u00f3 la descarga de Finviz tras reintentar; ver log).");
+            continue;
         }
         const c = contadores[t];
         const d = resultadosPorTicker[t].dilucion;
         const veto = d && d.pct >= UMBRAL_DILUCION_PCT;
-        return t + ": " + c.ok + " CUMPLE - " + c.nok + " INCUMPLE - " + c.na + " N/A" +
+        lineas.push(t + ": " + c.ok + " CUMPLE - " + c.nok + " INCUMPLE - " + c.na + " N/A" +
             (c.nok === 0 && c.na === 0 ? " -> pasa todos los criterios del screener." : "") +
-            (veto ? " \u26a0 DESCARTAR por diluci\u00f3n fuerte (ver fila roja)." : "");
-    });
+            (veto ? " \u26a0 DESCARTAR por diluci\u00f3n fuerte (ver fila roja)." : ""));
+    }
     resumenDiv.textContent = lineas.join("\n");
-    logMsg("Comparacion finalizada para " + tickers.length + " ticker(s).");
 }
 
 function leeFiltrosScreener() {
@@ -450,14 +525,28 @@ async function runComparison() {
                screenerSelect.options[screenerSelect.selectedIndex].textContent);
         logMsg("Filtros del screener (" + filtros.length + "): " + filtros.join(", "));
 
-        const pares = await Promise.all(tickers.map(async (ticker) => {
-            const [r, dilucion] = await Promise.all([
-                descargaDatos(ticker),
-                compruebaDilucion(ticker)
-            ]);
-            return [ticker, { datos: r ? r.datos : null, dilucion: dilucion }];
-        }));
-        const resultadosPorTicker = Object.fromEntries(pares);
+        // Cada ticker cuesta 1 peticion a Finviz y de 1 a 3 a SEC EDGAR, mas una
+        // unica para el mapeo ticker->CIK. Las de Finviz van primero en la cola.
+        logMsg("Tiempo estimado: entre " + minutosEstimados(2 * tickers.length + 1) + " y " +
+               minutosEstimados(4 * tickers.length + 1) + " minuto(s) (limite del proxy: " +
+               PROXY_MAX_POR_MINUTO + " peticiones/minuto). Las fichas de Finviz van primero.");
+
+        const descripciones = await loadDescriptions();
+        const resultadosPorTicker = {};
+        for (const t of tickers) resultadosPorTicker[t] = { datos: undefined, dilucion: undefined };
+        const repinta = () => pintaMultiTicker(tickers, filtros, resultadosPorTicker, descripciones);
+        repinta();
+
+        await Promise.all(tickers.map((ticker) => Promise.all([
+            descargaDatos(ticker).then(r => {
+                resultadosPorTicker[ticker].datos = r ? r.datos : null;
+                repinta();
+            }),
+            compruebaDilucion(ticker).then(d => {
+                resultadosPorTicker[ticker].dilucion = d;
+                repinta();
+            })
+        ])));
 
         if (tickers.every(t => !resultadosPorTicker[t].datos)) {
             resumenDiv.textContent =
@@ -466,8 +555,9 @@ async function runComparison() {
             logMsg("La descarga ha fallado para todos los tickers.");
             return;
         }
-
-        await pintaMultiTicker(tickers, filtros, resultadosPorTicker);
+        const fallidos = tickers.filter(t => !resultadosPorTicker[t].datos);
+        logMsg("Comparacion finalizada para " + tickers.length + " ticker(s)" +
+               (fallidos.length ? "; sin ficha de Finviz: " + fallidos.join(", ") : "") + ".");
 
     } catch (e) {
         logMsg("Error inesperado: " + e.message);

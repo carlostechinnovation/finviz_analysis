@@ -10,7 +10,9 @@ const assert = require("node:assert/strict");
 const {
     aNumero, compara, buscaValor, buscaDescripcion,
     extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
-    normaliza, limpia, ALIAS
+    normaliza, limpia, ALIAS,
+    creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados,
+    PROXY_MAX_POR_MINUTO
 } = require("../docs/logica.js");
 
 test("normaliza: pasa a minusculas y quita todo lo que no sea alfanumerico", () => {
@@ -185,4 +187,129 @@ test("calculaDilucion: descarta puntos con val no numerico o sin fecha", () => {
     assert.ok(r);
     assert.equal(r.actual.val, 14000000);
     assert.equal(r.anterior.val, 10000000);
+});
+
+// --- Cola del proxy (r.jina.ai admite 20 peticiones/minuto por IP) ---
+
+test("PROXY_MAX_POR_MINUTO deja margen bajo el cupo real de r.jina.ai (20/min)", () => {
+    assert.ok(PROXY_MAX_POR_MINUTO < 20);
+});
+
+test("creaLimitador: nunca arranca mas tareas por ventana que el cupo", async () => {
+    const limitador = creaLimitador(3, 150, 10);
+    const arranques = [];
+    const tareas = [];
+    for (let i = 0; i < 7; i++) {
+        tareas.push(limitador.encola(async () => { arranques.push(Date.now()); return i; }));
+    }
+    const resultados = await Promise.all(tareas);
+    assert.deepEqual(resultados, [0, 1, 2, 3, 4, 5, 6]);
+    // En cualquier ventana de 150 ms caben como mucho 3 arranques.
+    for (let i = 3; i < arranques.length; i++) {
+        assert.ok(arranques[i] - arranques[i - 3] >= 145, "arranque " + i + " demasiado pronto");
+    }
+});
+
+test("creaLimitador: respeta el maximo de tareas simultaneas", async () => {
+    const limitador = creaLimitador(100, 1000, 2);
+    let activas = 0, maximo = 0;
+    const tarea = () => limitador.encola(async () => {
+        activas++;
+        maximo = Math.max(maximo, activas);
+        await new Promise(r => setTimeout(r, 20));
+        activas--;
+    });
+    await Promise.all([tarea(), tarea(), tarea(), tarea(), tarea()]);
+    assert.equal(maximo, 2);
+});
+
+test("creaLimitador: a igual cupo, despacha antes la prioridad baja (Finviz) que la alta (SEC)", async () => {
+    const limitador = creaLimitador(100, 1000, 1);
+    const orden = [];
+    const bloqueo = limitador.encola(() => new Promise(r => setTimeout(r, 20)));
+    const p1 = limitador.encola(async () => orden.push("sec"), 1);
+    const p2 = limitador.encola(async () => orden.push("finviz"), 0);
+    await Promise.all([bloqueo, p1, p2]);
+    assert.deepEqual(orden, ["finviz", "sec"]);
+});
+
+test("creaLimitador: una tarea que lanza rechaza su promesa y no bloquea la cola", async () => {
+    const limitador = creaLimitador(100, 1000, 1);
+    await assert.rejects(limitador.encola(async () => { throw new Error("boom"); }), /boom/);
+    assert.equal(await limitador.encola(async () => "sigue"), "sigue");
+    assert.equal(limitador.pendientes(), 0);
+});
+
+test("creaLimitador: pausa() retrasa los arranques siguientes", async () => {
+    const limitador = creaLimitador(100, 1000, 5);
+    limitador.pausa(80);
+    const t0 = Date.now();
+    await limitador.encola(async () => null);
+    assert.ok(Date.now() - t0 >= 75);
+});
+
+test("esReintentable: transitorios si, errores definitivos no", () => {
+    for (const s of [0, 408, 429, 500, 502, 503, 504]) assert.equal(esReintentable(s), true, String(s));
+    for (const s of [400, 401, 403, 404, 422]) assert.equal(esReintentable(s), false, String(s));
+});
+
+test("errorDestinoProxy: lee el aviso de r.jina.ai cuando el destino falla", () => {
+    const texto = "Title: \n\nURL Source: https://data.sec.gov/x.json\n\n" +
+        "Warning: Target URL returned error 404: Not Found\n\nMarkdown Content:\n`NoSuchKey`";
+    assert.equal(errorDestinoProxy(texto), 404);
+    assert.equal(errorDestinoProxy("Title: FDX\n\nMarkdown Content:\nMarket Cap**68.55B**"), null);
+});
+
+test("esBusquedaFinviz: un ticker inexistente cae en la pagina de busqueda", () => {
+    assert.equal(esBusquedaFinviz("Title: Search\n\nURL Source: https://finviz.com/quote.ashx?t=ZZZZQX"), true);
+    assert.equal(esBusquedaFinviz("Title: XMTR - Xometry Inc Stock Price and Quote\n\nURL Source: x"), false);
+});
+
+test("minutosEstimados: redondea hacia arriba al ritmo del cupo", () => {
+    assert.equal(minutosEstimados(0), 1);
+    assert.equal(minutosEstimados(PROXY_MAX_POR_MINUTO), 1);
+    assert.equal(minutosEstimados(PROXY_MAX_POR_MINUTO + 1), 2);
+    assert.equal(minutosEstimados(111), Math.ceil(111 / PROXY_MAX_POR_MINUTO));
+});
+
+// --- Dilucion: datos caducados o incoherentes (casos reales del 2026-09-29) ---
+
+test("calculaDilucion: con 'hoy', rechaza una etiqueta XBRL abandonada hace anios (WLY 2010-2011)", () => {
+    const puntos = [
+        { end: "2010-08-31", val: 60264327 },
+        { end: "2011-05-31", val: 60884591 }
+    ];
+    assert.ok(calculaDilucion(puntos), "sin 'hoy' se sigue calculando (compatibilidad)");
+    assert.equal(calculaDilucion(puntos, new Date("2026-09-29")), null);
+});
+
+test("calculaDilucion: con 'hoy', acepta un dato de hace menos de ~18 meses", () => {
+    const puntos = [
+        { end: "2024-12-31", val: 118209139 },
+        { end: "2025-12-31", val: 122943172 }
+    ];
+    const r = calculaDilucion(puntos, new Date("2026-09-29"));
+    assert.ok(r);
+    assert.ok(Math.abs(r.pct - 4.0) < 0.1);
+});
+
+test("calculaDilucion: ignora los ceros (XMTR declaraba 0 acciones en 2021-12-31)", () => {
+    const puntos = [
+        { end: "2020-12-31", val: 7755782 },
+        { end: "2021-12-31", val: 0 }
+    ];
+    assert.equal(calculaDilucion(puntos), null);
+});
+
+test("calculaDilucion: una caida de mas del 90% es un error de escala, no un dato (CPK)", () => {
+    const puntos = [
+        { end: "2025-08-04", val: 23544479000 },
+        { end: "2026-08-03", val: 24106455 }
+    ];
+    assert.equal(calculaDilucion(puntos, new Date("2026-09-29")), null);
+});
+
+test("calculaDilucion: 'shares' que no es una lista (la SEC devuelve {} a veces, CTSH) no lanza", () => {
+    assert.equal(calculaDilucion({}), null);
+    assert.equal(calculaDilucion(undefined), null);
 });
