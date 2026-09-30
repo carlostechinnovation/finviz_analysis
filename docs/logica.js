@@ -473,12 +473,74 @@ function minutosEstimados(nPeticiones) {
 
 /* -------------------------------------------------------------------------
    6) EVALUACION DE CASILLAS, PUNTUACION Y ORDEN DE COLUMNAS
-   Cada casilla de filtro vale PUNTOS_POR_ESTADO[estado]. La fila de dilucion
-   solo resta: PUNTOS_ALERTA_DILUCION si hay alerta, 0 en otro caso (ni la
-   dilucion baja ni la N/D suman). Ver diseno_funcional.md SS7.
+   La puntuacion prima la SOLVENCIA (ver diseno_funcional.md SS7): cada filtro
+   da unos puntos si cumple, otros si falta el dato (N/A) y otros si incumple;
+   Debt/Eq, LT Debt/Eq y Current Ratio puntuan ademas por tramos segun su
+   valor. La fila de dilucion solo resta: PUNTOS_ALERTA_DILUCION si hay
+   alerta, 0 en otro caso. Una casilla sin ficha (descarga pendiente o
+   fallida) vale 0: un fallo del proxy no dice nada de la empresa.
    ------------------------------------------------------------------------- */
-const PUNTOS_POR_ESTADO = { ok: 1, na: 0, nok: -0.5 };
+
+// Pesos por codigo de filtro. En los "tramos" se aplica el primero cuya
+// comparacion (op, limite) se cumple. Sus limites coinciden con la condicion
+// del screener (p.ej. LT Debt/Eq < 1), asi que un tramo positivo es siempre
+// una casilla verde y uno negativo una roja. "cumple" e "incumple" valen el
+// mejor y el peor tramo. "patrimonio": con fondos propios negativos Finviz
+// pone "-" en el ratio; se trata como el peor tramo (ver hayPatrimonioNegativo).
+const PESOS_FILTROS = {
+    // --- Solvencia (por tramos) ---
+    "fa_ltdebteq_u1": { cumple: 4, na: -1, incumple: -4, patrimonio: true, tramos: [
+        { op: "<",  limite: 0.3, puntos: 4 },
+        { op: "<",  limite: 0.6, puntos: 3 },
+        { op: "<",  limite: 1,   puntos: 1.5 },
+        { op: "<=", limite: 2,   puntos: -2 },
+        { op: ">",  limite: 2,   puntos: -4 }
+    ] },
+    "fa_debteq_u1": { cumple: 3, na: -1, incumple: -3, patrimonio: true, tramos: [
+        { op: "<",  limite: 0.5, puntos: 3 },
+        { op: "<",  limite: 1,   puntos: 1.5 },
+        { op: "<=", limite: 2,   puntos: -1.5 },
+        { op: ">",  limite: 2,   puntos: -3 }
+    ] },
+    // Graham pedia un Current Ratio de 2 o mas para el inversor defensivo.
+    "fa_curratio_o1": { cumple: 3, na: -1, incumple: -3, tramos: [
+        { op: ">=", limite: 2,   puntos: 3 },
+        { op: ">=", limite: 1.5, puntos: 2.5 },
+        { op: ">",  limite: 1,   puntos: 1.5 },
+        { op: ">=", limite: 0.8, puntos: -1.5 },
+        { op: "<",  limite: 0.8, puntos: -3 }
+    ] },
+
+    // --- Capacidad de pago ---
+    "fa_opermargin_o5":   { cumple: 2.5, na: -0.5, incumple: -2.5 },
+    "fa_epsyoyttm_pos":   { cumple: 1.5, na: 0,    incumple: -1.5 },
+    "fa_grossmargin_o10": { cumple: 1,   na: 0,    incumple: -1 },
+
+    // --- Valoracion: en P/E y Forward P/E Finviz pone "-" si hay perdidas ---
+    "fa_fpe_u20":    { cumple: 1,    na: -1, incumple: -0.5 },
+    "fa_pe_u30":     { cumple: 0.75, na: -1, incumple: -0.5 },
+    "fa_evsales_u6": { cumple: 0.5,  na: 0,  incumple: -0.5 },
+    "fa_ps_o2":      { cumple: 0.25, na: 0,  incumple: -0.25 },
+
+    // --- Propiedad / liquidez bursatil ---
+    "sh_short_u10":   { cumple: 1,    na: 0, incumple: -1 },
+    "sh_instown_o30": { cumple: 0.5,  na: 0, incumple: -0.5 },
+    "sh_float_o1":    { cumple: 0.25, na: 0, incumple: -0.25 },
+    "sh_relvol_o0.5": { cumple: 0.25, na: 0, incumple: 0 },
+
+    // --- Descriptivo: ser mega-cap no empeora la solvencia ---
+    "cap_largeunder": { cumple: 0.25, na: 0, incumple: 0 },
+
+    // --- Tecnicos (desempate) ---
+    "ta_perf_3yup":           { cumple: 0.75, na: 0, incumple: -0.75 },
+    "ta_perf2_26wup":         { cumple: 0.5,  na: 0, incumple: -0.5 },
+    "ta_highlow52w_a5h":      { cumple: 0.5,  na: 0, incumple: -0.5 },
+    "ta_rsi_nos40":           { cumple: 0.25, na: 0, incumple: -0.25 },
+    "ta_sma20_pa":            { cumple: 0.25, na: 0, incumple: -0.25 },
+    "ta_averagetruerange_o1": { cumple: 0.25, na: 0, incumple: 0 }
+};
 const PUNTOS_ALERTA_DILUCION = -99;
+const ETIQUETA_VALOR_CONTABLE = "Book/sh";
 const ORDEN_ENTRADA = "entrada";
 const ORDEN_PUNTOS = "puntos";
 // Con menos empresas no hay nada que ordenar: se ocultan la fila "Orden
@@ -510,20 +572,41 @@ function estadoDeValor(bruto, def) {
 }
 
 /**
+ * Indica si un ratio de deuda debe tratarse como fondos propios negativos:
+ * el valor contable por accion (Book/sh) es negativo, o el propio ratio lo es.
+ * Finviz no publica Debt/Eq ni LT Debt/Eq en ese caso (pone "-"), y dejarlo
+ * como N/A premiaria al caso mas arriesgado frente a un ratio alto.
+ * @param {Object} datos Ficha de la empresa.
+ * @param {string} codigo Codigo del filtro.
+ * @param {number} valor Valor numerico del ratio (NaN si no hay).
+ * @returns {boolean} true si hay que tratarlo como patrimonio negativo.
+ */
+function hayPatrimonioNegativo(datos, codigo, valor) {
+    const peso = PESOS_FILTROS[codigo];
+    if (!peso || !peso.patrimonio) return false;
+    return valor < 0 || aNumero(buscaValor(datos, ETIQUETA_VALOR_CONTABLE)) < 0;
+}
+
+/**
  * Evalua una casilla: un filtro del screener para una empresa.
  * @param {Object|null|undefined} datos Ficha de la empresa (undefined =
  *     descarga pendiente, null = descarga fallida).
  * @param {string} codigo Codigo del filtro.
- * @returns {{texto:string, estado:string}} Texto a mostrar y estado.
+ * @returns {{texto:string, estado:string, valor?:number, sinFicha?:boolean,
+ *     patrimonioNegativo?:boolean}} Texto a mostrar, estado y datos para puntuar.
  */
 function evaluaFiltro(datos, codigo) {
-    if (datos === undefined) return { texto: "(descargando)", estado: "na" };
-    if (!datos) return { texto: "(sin datos)", estado: "na" };
+    if (datos === undefined) return { texto: "(descargando)", estado: "na", sinFicha: true };
+    if (!datos) return { texto: "(sin datos)", estado: "na", sinFicha: true };
     const def = FILTROS[codigo];
     if (!def) return { texto: "N/A", estado: "na" };
     const bruto = buscaValor(datos, def.finviz);
     const texto = (bruto === undefined || bruto === "") ? "N/A" : String(bruto);
-    return { texto: texto, estado: estadoDeValor(bruto, def) };
+    const valor = aNumero(bruto, def.escala);
+    if (hayPatrimonioNegativo(datos, codigo, valor)) {
+        return { texto: texto + " (patrimonio negativo)", estado: "nok", patrimonioNegativo: true };
+    }
+    return { texto: texto, estado: estadoDeValor(bruto, def), valor: valor };
 }
 
 /**
@@ -531,7 +614,7 @@ function evaluaFiltro(datos, codigo) {
  * @param {string[]} tickers Empresas.
  * @param {string[]} codigos Filtros del screener.
  * @param {Object} resultadosPorTicker ticker -> { datos, dilucion }.
- * @returns {Object} evaluaciones[codigo][ticker] = { texto, estado }.
+ * @returns {Object} evaluaciones[codigo][ticker] = salida de evaluaFiltro.
  */
 function evaluaTabla(tickers, codigos, resultadosPorTicker) {
     const evaluaciones = {};
@@ -554,14 +637,44 @@ function hayAlertaDilucion(dilucion) {
 }
 
 /**
- * Puntos de una empresa a partir de los estados de sus casillas.
- * @param {string[]} estados Estados ("ok"/"nok"/"na") de sus filtros.
+ * Puntos del primer tramo cuya comparacion cumple el valor.
+ * @param {Array<{op:string, limite:number, puntos:number}>} tramos Tramos.
+ * @param {number} valor Valor del ratio.
+ * @returns {number} Puntos del tramo, o 0 si ninguno encaja.
+ */
+function puntosTramo(tramos, valor) {
+    for (const tramo of tramos) {
+        if (compara(valor, tramo.op, tramo.limite)) return tramo.puntos;
+    }
+    return 0;
+}
+
+/**
+ * Puntos de una casilla segun PESOS_FILTROS.
+ * @param {string} codigo Codigo del filtro.
+ * @param {Object} evaluacion Salida de evaluaFiltro.
+ * @returns {number} Puntos (0 si no hay ficha o el filtro no tiene pesos).
+ */
+function puntosCasilla(codigo, evaluacion) {
+    const peso = PESOS_FILTROS[codigo];
+    if (!peso || evaluacion.sinFicha) return 0;
+    if (evaluacion.patrimonioNegativo) return peso.incumple;
+    if (evaluacion.estado === "na") return peso.na;
+    if (peso.tramos) return puntosTramo(peso.tramos, evaluacion.valor);
+    return evaluacion.estado === "ok" ? peso.cumple : peso.incumple;
+}
+
+/**
+ * Puntos de una empresa: suma de sus casillas mas la alerta de dilucion.
+ * @param {Object} evaluacionesTicker codigo -> salida de evaluaFiltro.
  * @param {boolean} alertaDilucion true si su fila de dilucion esta en alerta.
  * @returns {number} Suma de puntos.
  */
-function puntosEmpresa(estados, alertaDilucion) {
+function puntosEmpresa(evaluacionesTicker, alertaDilucion) {
     let total = alertaDilucion ? PUNTOS_ALERTA_DILUCION : 0;
-    for (const estado of estados) total += PUNTOS_POR_ESTADO[estado] || 0;
+    for (const codigo of Object.keys(evaluacionesTicker)) {
+        total += puntosCasilla(codigo, evaluacionesTicker[codigo]);
+    }
     return total;
 }
 
@@ -575,8 +688,9 @@ function puntosEmpresa(estados, alertaDilucion) {
 function calculaPuntosPorTicker(tickers, evaluaciones, resultadosPorTicker) {
     const puntos = {};
     for (const t of tickers) {
-        const estados = Object.keys(evaluaciones).map(c => evaluaciones[c][t].estado);
-        puntos[t] = puntosEmpresa(estados, hayAlertaDilucion(resultadosPorTicker[t].dilucion));
+        const delTicker = {};
+        for (const codigo of Object.keys(evaluaciones)) delTicker[codigo] = evaluaciones[codigo][t];
+        puntos[t] = puntosEmpresa(delTicker, hayAlertaDilucion(resultadosPorTicker[t].dilucion));
     }
     return puntos;
 }
@@ -620,8 +734,10 @@ if (typeof module !== "undefined" && module.exports) {
         PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS, PROXY_MAX_INTENTOS,
         PROXY_PAUSA_429_MS, PRIORIDAD_FINVIZ, PRIORIDAD_SEC,
         creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados,
-        PUNTOS_POR_ESTADO, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
-        ordenaFiltros, estadoDeValor, evaluaFiltro, evaluaTabla, hayAlertaDilucion,
-        puntosEmpresa, calculaPuntosPorTicker, ordenaTickers, hayVariasEmpresas
+        PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ETIQUETA_VALOR_CONTABLE,
+        ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
+        ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
+        hayAlertaDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
+        ordenaTickers, hayVariasEmpresas
     };
 }

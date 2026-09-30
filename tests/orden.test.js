@@ -1,4 +1,5 @@
-// Tests de la evaluacion de casillas, la puntuacion por empresa y el orden de
+// Tests de la evaluacion de casillas, la puntuacion por empresa (pesos que
+// priman la solvencia, con tramos y fondos propios negativos) y el orden de
 // columnas (docs/logica.js, seccion 6), mas unas comprobaciones estaticas de
 // docs/index.html y docs/app.js (botones de orden presentes, #resumen quitado).
 // Sin DOM ni red: node --test, sin dependencias.
@@ -10,10 +11,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
-    ordenaFiltros, estadoDeValor, evaluaFiltro, evaluaTabla, hayAlertaDilucion,
-    puntosEmpresa, calculaPuntosPorTicker, ordenaTickers, hayVariasEmpresas,
+    ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
+    hayAlertaDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
+    ordenaTickers, hayVariasEmpresas, extraeDatosMarkdown, compara,
     FILTROS, ORDEN, UMBRAL_DILUCION_PCT,
-    PUNTOS_POR_ESTADO, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS
+    PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS
 } = require("../docs/logica.js");
 
 const DOCS = path.join(__dirname, "..", "docs");
@@ -47,17 +49,22 @@ test("estadoDeValor: operador desconocido da na, no un falso ok/nok", () => {
     assert.equal(estadoDeValor("5", { op: "!=", valor: 3 }), "na");
 });
 
-test("evaluaFiltro: descarga pendiente, fallida y filtro no soportado son naranja (na)", () => {
-    assert.deepEqual(evaluaFiltro(undefined, "fa_pe_u30"), { texto: "(descargando)", estado: "na" });
-    assert.deepEqual(evaluaFiltro(null, "fa_pe_u30"), { texto: "(sin datos)", estado: "na" });
+test("evaluaFiltro: descarga pendiente o fallida es naranja y se marca sinFicha", () => {
+    assert.deepEqual(evaluaFiltro(undefined, "fa_pe_u30"), { texto: "(descargando)", estado: "na", sinFicha: true });
+    assert.deepEqual(evaluaFiltro(null, "fa_pe_u30"), { texto: "(sin datos)", estado: "na", sinFicha: true });
+});
+
+test("evaluaFiltro: filtro no soportado es naranja (na)", () => {
     assert.deepEqual(evaluaFiltro({ "P/E": "10" }, "zz_desconocido"), { texto: "N/A", estado: "na" });
 });
 
-test("evaluaFiltro: el texto es el valor de la ficha y el estado su cumplimiento", () => {
-    assert.deepEqual(evaluaFiltro({ "P/E": "10.2" }, "fa_pe_u30"), { texto: "10.2", estado: "ok" });
-    assert.deepEqual(evaluaFiltro({ "P/E": "31" }, "fa_pe_u30"), { texto: "31", estado: "nok" });
-    assert.deepEqual(evaluaFiltro({ "P/E": "" }, "fa_pe_u30"), { texto: "N/A", estado: "na" });
-    assert.deepEqual(evaluaFiltro({}, "fa_pe_u30"), { texto: "N/A", estado: "na" });
+test("evaluaFiltro: el texto es el valor de la ficha, el estado su cumplimiento y valor el numero", () => {
+    assert.deepEqual(evaluaFiltro({ "P/E": "10.2" }, "fa_pe_u30"), { texto: "10.2", estado: "ok", valor: 10.2 });
+    assert.deepEqual(evaluaFiltro({ "P/E": "31" }, "fa_pe_u30"), { texto: "31", estado: "nok", valor: 31 });
+    const vacio = evaluaFiltro({ "P/E": "" }, "fa_pe_u30");
+    assert.equal(vacio.texto, "N/A");
+    assert.equal(vacio.estado, "na");
+    assert.equal(evaluaFiltro({}, "fa_pe_u30").estado, "na");
 });
 
 test("evaluaTabla: una evaluacion por filtro y ticker", () => {
@@ -67,11 +74,129 @@ test("evaluaTabla: una evaluacion por filtro y ticker", () => {
     assert.equal(ev["fa_pe_u30"].BBB.texto, "(sin datos)");
 });
 
-// --- Puntuacion ---
+// --- Fondos propios negativos ---
 
-test("PUNTOS: verde +1, naranja 0, rojo -0.5 y alerta de dilucion -99", () => {
-    assert.deepEqual(PUNTOS_POR_ESTADO, { ok: 1, na: 0, nok: -0.5 });
-    assert.equal(PUNTOS_ALERTA_DILUCION, -99);
+test("hayPatrimonioNegativo: Book/sh negativo o ratio negativo, solo en ratios de deuda", () => {
+    const negativo = { "Book/sh": "-1.45" };
+    assert.equal(hayPatrimonioNegativo(negativo, "fa_debteq_u1", NaN), true);
+    assert.equal(hayPatrimonioNegativo(negativo, "fa_ltdebteq_u1", NaN), true);
+    assert.equal(hayPatrimonioNegativo(negativo, "fa_curratio_o1", 1.08), false);
+    assert.equal(hayPatrimonioNegativo({ "Book/sh": "16.65" }, "fa_debteq_u1", 3.77), false);
+    assert.equal(hayPatrimonioNegativo({}, "fa_debteq_u1", -0.8), true);
+    assert.equal(hayPatrimonioNegativo({}, "fa_debteq_u1", NaN), false);
+});
+
+test("evaluaFiltro: caso real MCD (Book/sh -1.45, Finviz pone '-' en Debt/Eq): casilla roja", () => {
+    // Fragmento real de la ficha de Finviz via r.jina.ai (2026-09-30).
+    const datos = extraeDatosMarkdown(
+        "Book/sh**-1.45**P/B**-**Quick Ratio**1.07**Current Ratio**1.08**Debt/Eq**-**LT Debt/Eq**-**");
+    assert.deepEqual(evaluaFiltro(datos, "fa_debteq_u1"),
+        { texto: "- (patrimonio negativo)", estado: "nok", patrimonioNegativo: true });
+    assert.equal(evaluaFiltro(datos, "fa_ltdebteq_u1").estado, "nok");
+    assert.equal(evaluaFiltro(datos, "fa_curratio_o1").estado, "ok");
+});
+
+// --- Pesos y tramos ---
+
+test("PESOS_FILTROS: todos los filtros soportados tienen pesos", () => {
+    for (const codigo of Object.keys(FILTROS)) {
+        const peso = PESOS_FILTROS[codigo];
+        assert.ok(peso, "falta el peso de " + codigo);
+        for (const campo of ["cumple", "na", "incumple"]) assert.equal(typeof peso[campo], "number");
+    }
+});
+
+test("PESOS_FILTROS: la solvencia pesa mas que cualquier otro criterio", () => {
+    const solvencia = ["fa_ltdebteq_u1", "fa_debteq_u1", "fa_curratio_o1"];
+    const resto = Object.keys(PESOS_FILTROS).filter(c => !solvencia.includes(c));
+    const maxResto = Math.max(...resto.map(c => PESOS_FILTROS[c].cumple));
+    for (const c of solvencia) assert.ok(PESOS_FILTROS[c].cumple > maxResto, c);
+    assert.ok(PESOS_FILTROS["fa_ltdebteq_u1"].cumple > PESOS_FILTROS["fa_debteq_u1"].cumple);
+});
+
+test("PESOS_FILTROS: en los tramos, cumple e incumple son el mejor y el peor tramo", () => {
+    for (const codigo of Object.keys(PESOS_FILTROS)) {
+        const peso = PESOS_FILTROS[codigo];
+        if (!peso.tramos) continue;
+        const puntos = peso.tramos.map(t => t.puntos);
+        assert.equal(peso.cumple, Math.max(...puntos), codigo);
+        assert.equal(peso.incumple, Math.min(...puntos), codigo);
+    }
+});
+
+test("PESOS_FILTROS: un tramo suma si y solo si la casilla es verde", () => {
+    for (const codigo of Object.keys(PESOS_FILTROS)) {
+        const peso = PESOS_FILTROS[codigo];
+        if (!peso.tramos) continue;
+        const def = FILTROS[codigo];
+        for (let v = 0; v <= 5; v = Math.round((v + 0.01) * 100) / 100) {
+            const cumple = compara(v, def.op, def.valor);
+            assert.equal(puntosTramo(peso.tramos, v) > 0, cumple, codigo + " con " + v);
+        }
+    }
+});
+
+test("PESOS_FILTROS: la suma maxima no llega a compensar la alerta de dilucion", () => {
+    const maximo = Object.keys(PESOS_FILTROS).reduce((s, c) => s + PESOS_FILTROS[c].cumple, 0);
+    assert.equal(maximo, 22.25);
+    assert.ok(maximo < -PUNTOS_ALERTA_DILUCION);
+});
+
+test("puntosTramo: LT Debt/Eq por tramos (< 0.3, 0.3-0.6, 0.6-1, 1-2, > 2)", () => {
+    const tramos = PESOS_FILTROS["fa_ltdebteq_u1"].tramos;
+    const casos = [[0, 4], [0.29, 4], [0.3, 3], [0.59, 3], [0.6, 1.5], [0.99, 1.5],
+                   [1, -2], [2, -2], [2.01, -4], [3.14, -4]];
+    for (const [valor, puntos] of casos) assert.equal(puntosTramo(tramos, valor), puntos, "valor " + valor);
+});
+
+test("puntosTramo: Debt/Eq por tramos (< 0.5, 0.5-1, 1-2, > 2)", () => {
+    const tramos = PESOS_FILTROS["fa_debteq_u1"].tramos;
+    const casos = [[0.1, 3], [0.49, 3], [0.5, 1.5], [0.99, 1.5], [1, -1.5], [2, -1.5], [3.77, -3]];
+    for (const [valor, puntos] of casos) assert.equal(puntosTramo(tramos, valor), puntos, "valor " + valor);
+});
+
+test("puntosTramo: Current Ratio por tramos (>= 2, 1.5-2, 1-1.5, 0.8-1, < 0.8)", () => {
+    const tramos = PESOS_FILTROS["fa_curratio_o1"].tramos;
+    const casos = [[3, 3], [2, 3], [1.99, 2.5], [1.5, 2.5], [1.08, 1.5], [1, -1.5],
+                   [0.8, -1.5], [0.76, -3], [0.31, -3]];
+    for (const [valor, puntos] of casos) assert.equal(puntosTramo(tramos, valor), puntos, "valor " + valor);
+});
+
+test("puntosTramo: sin tramo aplicable (NaN) devuelve 0", () => {
+    assert.equal(puntosTramo(PESOS_FILTROS["fa_curratio_o1"].tramos, NaN), 0);
+});
+
+test("puntosCasilla: sin ficha o filtro sin pesos vale 0", () => {
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro(undefined, "fa_ltdebteq_u1")), 0);
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro(null, "fa_ltdebteq_u1")), 0);
+    assert.equal(puntosCasilla("zz_desconocido", { texto: "N/A", estado: "na" }), 0);
+});
+
+test("puntosCasilla: N/A resta en solvencia y en P/E (perdidas), y es neutro en tecnicos", () => {
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro({}, "fa_ltdebteq_u1")), -1);
+    assert.equal(puntosCasilla("fa_curratio_o1", evaluaFiltro({}, "fa_curratio_o1")), -1);
+    assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({}, "fa_opermargin_o5")), -0.5);
+    assert.equal(puntosCasilla("fa_pe_u30", evaluaFiltro({ "P/E": "-" }, "fa_pe_u30")), -1);
+    assert.equal(puntosCasilla("ta_rsi_nos40", evaluaFiltro({}, "ta_rsi_nos40")), 0);
+});
+
+test("puntosCasilla: filtros binarios usan cumple / incumple", () => {
+    assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": "12%" }, "fa_opermargin_o5")), 2.5);
+    assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": "2%" }, "fa_opermargin_o5")), -2.5);
+    // Ser mega-cap incumple el screener pero no resta: no empeora la solvencia.
+    assert.equal(puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "3.45T" }, "cap_largeunder")), 0);
+});
+
+test("puntosCasilla: los ratios de solvencia puntuan por tramos", () => {
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "0.2" }, "fa_ltdebteq_u1")), 4);
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "0.8" }, "fa_ltdebteq_u1")), 1.5);
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "3.14" }, "fa_ltdebteq_u1")), -4);
+});
+
+test("puntosCasilla: patrimonio negativo vale el peor tramo", () => {
+    const datos = { "Book/sh": "-6.73", "Debt/Eq": "-", "LT Debt/Eq": "-" };
+    assert.equal(puntosCasilla("fa_ltdebteq_u1", evaluaFiltro(datos, "fa_ltdebteq_u1")), -4);
+    assert.equal(puntosCasilla("fa_debteq_u1", evaluaFiltro(datos, "fa_debteq_u1")), -3);
 });
 
 test("hayAlertaDilucion: solo a partir del umbral; sin datos o pendiente no es alerta", () => {
@@ -83,25 +208,27 @@ test("hayAlertaDilucion: solo a partir del umbral; sin datos o pendiente no es a
     assert.equal(hayAlertaDilucion(undefined), false);
 });
 
-test("puntosEmpresa: suma casillas verdes, naranjas y rojas", () => {
-    assert.equal(puntosEmpresa(["ok", "ok", "ok", "na", "nok"], false), 2.5);
-    assert.equal(puntosEmpresa([], false), 0);
-});
-
-test("puntosEmpresa: la alerta de dilucion resta 99; sin alerta la dilucion no suma", () => {
-    assert.equal(puntosEmpresa(["ok", "ok"], true), -97);
-    assert.equal(puntosEmpresa(["ok", "ok"], false), 2);
-});
-
-test("calculaPuntosPorTicker: combina filtros y dilucion de cada empresa", () => {
-    const resultados = {
-        AAA: { datos: { "P/E": "10", "Forward P/E": "25" }, dilucion: { pct: 2 } },
-        BBB: { datos: { "P/E": "10", "Forward P/E": "15" }, dilucion: { pct: 40 } },
-        CCC: { datos: null, dilucion: null }
+test("puntosEmpresa: suma las casillas; la alerta de dilucion resta 99 y sin alerta no suma", () => {
+    const ev = {
+        fa_ltdebteq_u1: evaluaFiltro({ "LT Debt/Eq": "0.2" }, "fa_ltdebteq_u1"),
+        fa_pe_u30: evaluaFiltro({ "P/E": "45" }, "fa_pe_u30")
     };
-    const tickers = ["AAA", "BBB", "CCC"];
-    const ev = evaluaTabla(tickers, ["fa_pe_u30", "fa_fpe_u20"], resultados);
-    assert.deepEqual(calculaPuntosPorTicker(tickers, ev, resultados), { AAA: 0.5, BBB: -97, CCC: 0 });
+    assert.equal(puntosEmpresa(ev, false), 3.5);
+    assert.equal(puntosEmpresa(ev, true), -95.5);
+    assert.equal(puntosEmpresa({}, false), 0);
+});
+
+test("calculaPuntosPorTicker: solvente, patrimonio negativo, sin ficha con alerta y pendiente", () => {
+    const codigos = ["fa_ltdebteq_u1", "fa_debteq_u1", "fa_curratio_o1"];
+    const resultados = {
+        AAA: { datos: { "LT Debt/Eq": "0.2", "Debt/Eq": "0.4", "Current Ratio": "2.5" }, dilucion: { pct: 2 } },
+        BBB: { datos: { "Book/sh": "-6.73", "Debt/Eq": "-", "LT Debt/Eq": "-", "Current Ratio": "0.76" }, dilucion: null },
+        CCC: { datos: null, dilucion: { pct: 40 } },
+        DDD: { datos: undefined, dilucion: undefined }
+    };
+    const tickers = ["AAA", "BBB", "CCC", "DDD"];
+    const ev = evaluaTabla(tickers, codigos, resultados);
+    assert.deepEqual(calculaPuntosPorTicker(tickers, ev, resultados), { AAA: 10, BBB: -10, CCC: -99, DDD: 0 });
 });
 
 // --- Orden de columnas ---

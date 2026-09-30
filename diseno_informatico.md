@@ -33,7 +33,8 @@ docs/                            <- raiz publicada en GitHub Pages
 └── descripcion_filtros.csv      glosario de campos Finviz (FILTRO|DESCRIPCION)
 tests/
 ├── logica.test.js               tests de parseo, dilucion y cola del proxy (docs/logica.js)
-└── orden.test.js                tests de evaluacion de casillas, puntuacion y orden de columnas,
+└── orden.test.js                tests de evaluacion de casillas, pesos/tramos, patrimonio negativo,
+                                  puntuacion y orden de columnas,
                                   mas comprobaciones estaticas de index.html / app.js / style.css
 package.json                     solo para poder correr "npm test" (sin dependencias)
 README.md                        resumen para la portada de GitHub
@@ -61,9 +62,19 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
    3. Ninguna de las dos llamadas lanza excepción hacia arriba: un fallo en un ticker (Finviz caído, ticker no listado en SEC, etc.) se registra en el log y ese ticker queda marcado como "sin datos" para Finviz y/o sin alerta de dilución, **sin bloquear a los demás tickers**.
    4. Cada vez que termina una descarga se **repinta la tabla** (`repinta()`) con lo que haya llegado: las celdas pendientes muestran `(descargando)` / `(pendiente)`. Con 55 tickers la comparación completa tarda unos 7-10 minutos, marcados por el cupo del proxy; el progreso y el balance final van al log.
 5. `pintaMultiTicker(comparacion)` construye la tabla a partir del estado guardado en `comparacionActual` (`{ tickers, filtros, resultadosPorTicker, descripciones }`):
-   1. `ordenaFiltros` (orden económico de `ORDEN`), `evaluaTabla` → `evaluaFiltro` (texto y estado `ok`/`nok`/`na` de cada casilla) y `calculaPuntosPorTicker` → `puntosEmpresa` (+1 verde, 0 naranja, −0,5 roja, −99 si `hayAlertaDilucion`; la dilución en verde o `N/D` no suma). Todo en `logica.js`, sin DOM.
-   2. `ordenaTickers(tickers, puntos, criterioOrden)` decide el orden de las columnas: `ORDEN_ENTRADA` (el del textbox) u `ORDEN_PUNTOS` (de más a menos puntos; a igualdad, orden de entrada). Devuelve una lista nueva: el orden de entrada nunca se modifica.
-   3. Pinta, con ese orden de columnas:
+   1. `ordenaFiltros` (orden económico de `ORDEN`) y `evaluaTabla` → `evaluaFiltro`, que da el texto, el estado `ok`/`nok`/`na`, el valor numérico de cada casilla y dos marcas:
+      - `sinFicha`: descarga pendiente o fallida.
+      - `patrimonioNegativo`: `hayPatrimonioNegativo`, es decir, `Book/sh` < 0 o ratio negativo en Debt/Eq o LT Debt/Eq. En ese caso la casilla pasa a `nok` con el texto `(patrimonio negativo)`.
+   2. `calculaPuntosPorTicker` → `puntosEmpresa` → `puntosCasilla` aplica `PESOS_FILTROS`, la matriz de pesos que prima la solvencia (diseno_funcional.md §7), en este orden:
+      - `sinFicha` → 0;
+      - patrimonio negativo → `incumple` (peor tramo);
+      - N/A → `na`;
+      - con `tramos` → `puntosTramo` (primer tramo cuya comparación `op`/`limite` se cumple);
+      - si no → `cumple` / `incumple`.
+
+      Al total se suma `PUNTOS_ALERTA_DILUCION` (−99) si `hayAlertaDilucion`. Todo en `logica.js`, sin DOM. Para cambiar un peso o un tramo basta con editar `PESOS_FILTROS`; los tests comprueban que cada filtro soportado tiene pesos y que los tramos siguen alineados con la condición del screener.
+   3. `ordenaTickers(tickers, puntos, criterioOrden)` decide el orden de las columnas: `ORDEN_ENTRADA` (el del textbox) u `ORDEN_PUNTOS` (de más a menos puntos; a igualdad, orden de entrada). Devuelve una lista nueva: el orden de entrada nunca se modifica.
+   4. Pinta, con ese orden de columnas:
       - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
       - Fila `Orden entrada` (`pintaFilaOrdenEntrada`, clase `.fila-orden`, gris claro): posición 1, 2, 3… de cada ticker en el textbox. Solo si `hayVariasEmpresas` (2 o más).
       - Fila `Orden por filtros cumplidos` (`pintaFilaPuntos`, clase `.fila-puntos`): los puntos de cada ticker.

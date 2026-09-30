@@ -509,9 +509,9 @@ function pintaFilaOrdenEntrada(columnas, tickers) {
 function pintaFilaPuntos(columnas, puntos) {
     anadeFila(
         ["Orden por filtros cumplidos", "M\u00e1s puntos = mejor",
-         "+" + PUNTOS_POR_ESTADO.ok + " por casilla verde, " + PUNTOS_POR_ESTADO.na +
-         " por naranja, " + PUNTOS_POR_ESTADO.nok + " por roja y " + PUNTOS_ALERTA_DILUCION +
-         " por alerta de diluci\u00f3n."],
+         "Pesos que priman la solvencia: LT Debt/Eq, Debt/Eq y Current Ratio punt\u00faan por " +
+         "tramos; " + PUNTOS_ALERTA_DILUCION + " por alerta de diluci\u00f3n; 0 si no hay ficha. " +
+         "Ver diseno_funcional.md \u00a77."],
         columnas.map(t => celda(puntos[t])),
         "fila-puntos");
 }

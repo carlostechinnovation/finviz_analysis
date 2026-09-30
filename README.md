@@ -15,7 +15,7 @@ Aplicación web estática (HTML + JavaScript, sin backend) que coge **uno o vari
 2. Escribe uno o varios tickers separados por comas (p. ej. `AAPL, MSFT, GOOG`).
 3. Elige un screener predefinido o pega la URL de uno tuyo de Finviz.
 4. Pulsa **Comparar**.
-5. Con dos o más empresas, los botones **Orden entrada** y **Orden por filtros cumplidos** (bajo "Comparar") reordenan las columnas sin volver a descargar nada: en el orden en que las escribiste o de más a menos puntos (+1 por filtro que cumple, 0 sin dato, −0,5 por filtro que incumple, −99 si hay alerta de dilución).
+5. Con dos o más empresas, los botones **Orden entrada** y **Orden por filtros cumplidos** (bajo "Comparar") reordenan las columnas sin volver a descargar nada: en el orden en que las escribiste o de más a menos puntos. La puntuación prima la **solvencia**: LT Debt/Eq, Debt/Eq y Current Ratio puntúan por tramos y pesan más que el resto, las empresas con fondos propios negativos reciben la peor nota en deuda y una alerta de dilución resta 99 (detalle y referencias en [diseno_funcional.md §7](diseno_funcional.md#7-puntuación-y-orden-de-las-empresas)).
 
 También puedes enlazar directo con los tickers precargados y la comparación ya lanzada (screener por defecto "solventes"), con `?tickers=` en la URL, p. ej. `https://carlostechinnovation.github.io/finviz_analysis/?tickers=AAPL,MSFT,GOOG`. Así es como el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) enlaza su tabla de Selección del día.
 
