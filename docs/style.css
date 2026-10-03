@@ -3,6 +3,12 @@ body {
   margin: 20px;
 }
 
+.subtitulo {
+  margin-top: -10px;
+  font-weight: normal;
+  color: #555;
+}
+
 input, select, button {
   margin: 5px 0;
   padding: 5px;

@@ -1,7 +1,8 @@
 // Tests de la evaluacion de casillas, la puntuacion por empresa (pesos que
 // priman la solvencia, con tramos y fondos propios negativos) y el orden de
 // columnas (docs/logica.js, seccion 6), mas unas comprobaciones estaticas de
-// docs/index.html y docs/app.js (botones de orden presentes, #resumen quitado).
+// docs/index.html y docs/app.js (botones de orden presentes, #resumen quitado,
+// subtitulo ?escenario=).
 // Sin DOM ni red: node --test, sin dependencias.
 "use strict";
 
@@ -277,6 +278,17 @@ test("app.js y style.css: no queda ninguna referencia a #resumen", () => {
     const css = fs.readFileSync(path.join(DOCS, "style.css"), "utf8");
     assert.equal(/getElementById\("resumen"\)|resumenDiv/.test(app), false);
     assert.equal(css.includes("#resumen"), false);
+});
+
+test("?escenario= se muestra como subtitulo oculto por defecto y sin interpretar HTML", () => {
+    const html = fs.readFileSync(path.join(DOCS, "index.html"), "utf8");
+    const app = fs.readFileSync(path.join(DOCS, "app.js"), "utf8");
+    const posTitulo = html.indexOf("</h1>");
+    const posEscenario = html.indexOf('<h2 id="escenario" class="subtitulo" hidden>');
+    assert.ok(posTitulo > -1 && posEscenario > posTitulo, "el subtitulo va justo bajo el <h1>");
+    assert.match(app, /parametrosURL\.get\("escenario"\)/);
+    assert.match(app, /escenarioEl\.textContent = escenarioURL/);
+    assert.equal(/escenarioEl\.innerHTML/.test(app), false);
 });
 
 test("app.js y logica.js siguen en ASCII puro (ver cabecera de ambos ficheros)", () => {

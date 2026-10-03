@@ -17,7 +17,7 @@ Aplicación web estática (HTML + JavaScript, sin backend) que coge **uno o vari
 4. Pulsa **Comparar**.
 5. Con dos o más empresas, los botones **Orden entrada** y **Orden por filtros cumplidos** (bajo "Comparar") reordenan las columnas sin volver a descargar nada: en el orden en que las escribiste o de más a menos puntos. La puntuación prima la **solvencia**: LT Debt/Eq, Debt/Eq y Current Ratio puntúan por tramos y pesan más que el resto, las empresas con fondos propios negativos reciben la peor nota en deuda y una alerta de dilución resta 99 (detalle y referencias en [diseno_funcional.md §7](diseno_funcional.md#7-puntuación-y-orden-de-las-empresas)).
 
-También puedes enlazar directo con los tickers precargados y la comparación ya lanzada (screener por defecto "solventes"), con `?tickers=` en la URL, p. ej. `https://carlostechinnovation.github.io/finviz_analysis/?tickers=AAPL,MSFT,GOOG`. Así es como el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) enlaza su tabla de Selección del día.
+También puedes enlazar directo con los tickers precargados y la comparación ya lanzada (screener por defecto "solventes"), con `?tickers=` en la URL, p. ej. `https://carlostechinnovation.github.io/finviz_analysis/?tickers=AAPL,MSFT,GOOG`. Así es como el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) enlaza su tabla de Selección del día. Con `&escenario=texto` ese texto aparece como subtítulo bajo el título (p. ej. `?tickers=AAPL,MSFT&escenario=BolsaML - 2026-10-03 14:23:05`); así indican los emails de [bolsa](https://github.com/carlostechinnovation/bolsa) y DIIA de qué ejecución vienen los tickers.
 
 ```bash
 cd docs
