@@ -11,7 +11,8 @@ const {
     aNumero, compara, buscaValor, buscaDescripcion,
     extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
     normaliza, limpia, ALIAS,
-    creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados,
+    creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
+    minutosEstimados,
     PROXY_MAX_POR_MINUTO
 } = require("../docs/logica.js");
 
@@ -258,6 +259,33 @@ test("errorDestinoProxy: lee el aviso de r.jina.ai cuando el destino falla", () 
         "Warning: Target URL returned error 404: Not Found\n\nMarkdown Content:\n`NoSuchKey`";
     assert.equal(errorDestinoProxy(texto), 404);
     assert.equal(errorDestinoProxy("Title: FDX\n\nMarkdown Content:\nMarket Cap**68.55B**"), null);
+});
+
+test("interpretaErrorProxy: bloqueo de dominio de r.jina.ai (respuesta real del 2026-10-17)", () => {
+    const cuerpo = '{"data":null,"code":403,"name":"AbuseAlleviationError","status":40305,' +
+        '"message":"Anonymous access to domain finviz.com blocked until Sat Oct 17 2026 13:44:37 ' +
+        'GMT+0000 (Coordinated Universal Time) due to previous abuse found on ' +
+        'https://finviz.com/quote.ashx?t=GS: DDoS attack suspected: Too many requests",' +
+        '"readableMessage":"AbuseAlleviationError: Anonymous access to domain finviz.com blocked ' +
+        'until Sat Oct 17 2026 13:44:37 GMT+0000 (Coordinated Universal Time) due to previous ' +
+        'abuse found on https://finviz.com/quote.ashx?t=GS: DDoS attack suspected: Too many requests"}';
+    const info = interpretaErrorProxy(cuerpo);
+    assert.equal(info.nombre, "AbuseAlleviationError");
+    assert.equal(info.dominio, "finviz.com");
+    assert.equal(info.hastaMs, Date.UTC(2026, 9, 17, 13, 44, 37));
+    assert.match(info.mensaje, /t=GS: DDoS attack suspected/);
+});
+
+test("interpretaErrorProxy: error JSON sin bloqueo y cuerpos que no son de Jina", () => {
+    const info = interpretaErrorProxy('{"name":"RateLimitTriggeredError","message":"Too many requests"}');
+    assert.equal(info.nombre, "RateLimitTriggeredError");
+    assert.equal(info.mensaje, "Too many requests");
+    assert.equal(info.dominio, null);
+    assert.equal(info.hastaMs, null);
+    assert.equal(interpretaErrorProxy("<html><body>403 Forbidden</body></html>"), null);
+    assert.equal(interpretaErrorProxy(""), null);
+    assert.equal(interpretaErrorProxy(undefined), null);
+    assert.equal(interpretaErrorProxy('{"data":null}'), null);
 });
 
 test("esBusquedaFinviz: un ticker inexistente cae en la pagina de busqueda", () => {

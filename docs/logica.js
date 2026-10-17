@@ -451,6 +451,37 @@ function errorDestinoProxy(texto) {
     return m ? parseInt(m[1], 10) : null;
 }
 
+// Cuando es r.jina.ai quien rechaza la peticion (403, 429...), explica el
+// motivo con un JSON en el cuerpo: {"name":"AbuseAlleviationError","message":
+// "Anonymous access to domain finviz.com blocked until <fecha> due to previous
+// abuse found on <url>: ..."}. Ese bloqueo es por dominio para TODOS los
+// usuarios anonimos, no por IP (comprobado el 2026-10-17: lo provoco una
+// peticion ajena a t=GS y duro unos 15 minutos). Sin leer el cuerpo, el log
+// solo decia "HTTP 403".
+/**
+ * Interpreta el cuerpo de un error propio de r.jina.ai.
+ * @param {string} cuerpo Cuerpo de la respuesta de error.
+ * @returns {{nombre:string, mensaje:string, dominio:(string|null),
+ *     hastaMs:(number|null)}|null} Datos del error (dominio y hastaMs solo si
+ *     es un bloqueo de dominio), o null si no es un error JSON de r.jina.ai.
+ */
+function interpretaErrorProxy(cuerpo) {
+    const json = extraeJSON(String(cuerpo || ""));
+    if (!json || typeof json !== "object") return null;
+    const mensaje = limpia(String(json.readableMessage || json.message || ""));
+    const nombre = String(json.name || "");
+    if (!mensaje && !nombre) return null;
+    const dominio = /access to domain (\S+) blocked/i.exec(mensaje);
+    const hasta = /blocked until (.+?GMT[+-]\d{4})/i.exec(mensaje);
+    const hastaMs = hasta ? Date.parse(hasta[1]) : NaN;
+    return {
+        nombre: nombre,
+        mensaje: mensaje,
+        dominio: dominio ? dominio[1] : null,
+        hastaMs: isNaN(hastaMs) ? null : hastaMs
+    };
+}
+
 // Finviz redirige un ticker inexistente a su pagina de busqueda: el proxy la
 // devuelve con "Title: Search". Es definitivo, no merece reintento.
 /**
@@ -733,7 +764,8 @@ if (typeof module !== "undefined" && module.exports) {
         extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
         PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS, PROXY_MAX_INTENTOS,
         PROXY_PAUSA_429_MS, PRIORIDAD_FINVIZ, PRIORIDAD_SEC,
-        creaLimitador, esReintentable, errorDestinoProxy, esBusquedaFinviz, minutosEstimados,
+        creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
+        minutosEstimados,
         PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ETIQUETA_VALOR_CONTABLE,
         ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
         ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,

@@ -101,19 +101,26 @@ function construyeURLProxy(objetivo) {
 }
 
 // Descarga el cuerpo completo con un limite de tiempo que cubre tambien la
-// lectura del cuerpo, no solo la llegada de las cabeceras. Nunca lanza.
+// lectura del cuerpo, no solo la llegada de las cabeceras. Nunca lanza. En
+// una respuesta de error tambien se lee el cuerpo (cuerpoError): ahi explica
+// r.jina.ai por que rechaza la peticion (ver interpretaErrorProxy).
 /**
  * Descarga una URL con limite de tiempo.
  * @param {string} url URL a descargar.
  * @param {number} ms Limite en milisegundos.
- * @returns {Promise<{status:number, texto?:string, motivo?:string}>} Resultado.
+ * @returns {Promise<{status:number, texto?:string, cuerpoError?:string,
+ *     motivo?:string}>} Resultado.
  */
 async function descargaTexto(url, ms) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
     try {
         const resp = await fetch(url, { cache: "no-store", signal: ctrl.signal, redirect: "follow" });
-        if (!resp.ok) return { status: resp.status };
+        if (!resp.ok) {
+            let cuerpoError = "";
+            try { cuerpoError = await resp.text(); } catch (e) { /* sin cuerpo: basta el status */ }
+            return { status: resp.status, cuerpoError: cuerpoError };
+        }
         return { status: resp.status, texto: await resp.text() };
     } catch (e) {
         return { status: 0, motivo: e.name === "AbortError" ? "timeout " + (ms / 1000) + "s" : e.message };
@@ -122,21 +129,87 @@ async function descargaTexto(url, ms) {
     }
 }
 
+// Bloqueos de dominio de r.jina.ai ya explicados en el log de la comparacion
+// en curso (clave "dominio|hasta"), para no repetir la explicacion larga en
+// cada ticker; y el ultimo detectado, para el balance final (anunciaFin).
+let bloqueosAvisados = new Set();
+let ultimoBloqueo = null;
+// Motivo final por el que no llego la ficha de Finviz de cada ticker.
+let motivosFalloFinviz = {};
+
+/**
+ * Recorta un texto largo para el log.
+ * @param {string} texto Texto.
+ * @param {number} max Longitud maxima.
+ * @returns {string} Texto recortado con "..." si sobraba.
+ */
+function recorta(texto, max) {
+    return texto.length > max ? texto.slice(0, max) + "..." : texto;
+}
+
+/**
+ * Hora local (la del navegador) de un instante.
+ * @param {number} ms Instante en ms.
+ * @returns {string} Hora como "15:44:37".
+ */
+function horaLocal(ms) {
+    return new Date(ms).toLocaleTimeString();
+}
+
+/**
+ * Explica en el log, una sola vez por comparacion, un bloqueo de dominio.
+ * @param {{dominio:string, hastaMs:number, mensaje:string}} info Bloqueo.
+ */
+function avisaBloqueo(info) {
+    ultimoBloqueo = info;
+    const clave = info.dominio + "|" + info.hastaMs;
+    if (bloqueosAvisados.has(clave)) return;
+    bloqueosAvisados.add(clave);
+    const minutos = Math.ceil((info.hastaMs - Date.now()) / 60000);
+    logMsg("AVISO: el proxy r.jina.ai bloquea el acceso anonimo a " + info.dominio +
+           " para TODOS sus usuarios (no solo para esta IP) hasta las " + horaLocal(info.hastaMs) +
+           (minutos > 0 ? " (dentro de unos " + minutos + " min)" : " (ya deberia haber terminado)") +
+           ". No es un fallo de esta pagina ni del cupo de peticiones por minuto.");
+    logMsg("  Mensaje de r.jina.ai: " + info.mensaje);
+    logMsg("  Mientras dure, todas las peticiones a " + info.dominio + " fallaran con HTTP 403.");
+}
+
+/**
+ * Motivo legible de una respuesta HTTP de error del proxy.
+ * @param {{status:number, cuerpoError?:string}} r Resultado de descargaTexto.
+ * @returns {string} Motivo para el log.
+ */
+function motivoErrorHTTP(r) {
+    const base = "HTTP " + r.status;
+    const info = interpretaErrorProxy(r.cuerpoError);
+    if (info && info.dominio && info.hastaMs) {
+        avisaBloqueo(info);
+        return base + " " + info.nombre + ": r.jina.ai bloquea " + info.dominio +
+               " hasta las " + horaLocal(info.hastaMs);
+    }
+    if (info) return base + " " + (info.nombre ? info.nombre + ": " : "") + recorta(info.mensaje, 200);
+    // Cuerpo que no es el JSON de Jina (p.ej. una pagina de error HTML).
+    const texto = limpia(String(r.cuerpoError || "").replace(/<[^>]*>/g, " "));
+    return texto ? base + ": " + recorta(texto, 200) : base;
+}
+
 // Pide "objetivo" a traves del proxy, respetando el cupo y reintentando lo
 // transitorio. "valida(texto)" devuelve null si la respuesta sirve, o
 // { motivo, definitivo } si no. Devuelve el texto, o null si no hubo manera.
 // Con opciones.silencioso no se anotan los fallos definitivos (p.ej. el 404 de
 // una etiqueta XBRL que la empresa no usa: es lo esperable, no un error).
+// opciones.alFallar(motivo) recibe el motivo final cuando se devuelve null.
 /**
  * Pide una URL al proxy respetando el cupo y reintentando lo transitorio.
  * @param {string} objetivo URL de destino.
  * @param {string} etiqueta Prefijo para el log.
  * @param {number} prioridad PRIORIDAD_FINVIZ o PRIORIDAD_SEC.
  * @param {Function} [valida] Validador de la respuesta.
- * @param {{silencioso?:boolean}} [opciones] Opciones de log.
+ * @param {{silencioso?:boolean, alFallar?:Function}} [opciones] Opciones de log.
  * @returns {Promise<string|null>} Texto valido, o null.
  */
 async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
+    opciones = opciones || {};
     const url = construyeURLProxy(objetivo);
     let motivo = "";
     for (let intento = 1; intento <= PROXY_MAX_INTENTOS; intento++) {
@@ -148,12 +221,13 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
             motivo = fallo.motivo;
             definitivo = !!fallo.definitivo;
         } else {
-            motivo = r.motivo || ("HTTP " + r.status);
+            motivo = r.motivo || motivoErrorHTTP(r);
             definitivo = !esReintentable(r.status);
             if (r.status === 429) limitadorProxy.pausa(PROXY_PAUSA_429_MS);
         }
         if (definitivo) {
-            if (!(opciones && opciones.silencioso)) logMsg("  [" + etiqueta + "] [FALLO] " + motivo);
+            if (!opciones.silencioso) logMsg("  [" + etiqueta + "] [FALLO] " + motivo);
+            if (opciones.alFallar) opciones.alFallar(motivo);
             return null;
         }
         if (intento < PROXY_MAX_INTENTOS) {
@@ -161,6 +235,7 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
         }
     }
     logMsg("  [" + etiqueta + "] [FALLO] " + motivo + " (tras " + PROXY_MAX_INTENTOS + " intentos)");
+    if (opciones.alFallar) opciones.alFallar(motivo);
     return null;
 }
 
@@ -186,7 +261,7 @@ async function descargaDatos(ticker) {
             return { motivo: "solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)" };
         }
         return null;
-    });
+    }, { alFallar: (motivo) => { motivosFalloFinviz[ticker] = motivo; } });
     if (texto === null) return null;
 
     logMsg("  [" + ticker + "] [OK] " + validos + " campos reconocidos");
@@ -703,13 +778,31 @@ function descargaTicker(ticker, resultadosPorTicker) {
  */
 function anunciaFin(tickers, resultadosPorTicker) {
     const fallidos = tickers.filter(t => !resultadosPorTicker[t].datos);
+    if (fallidos.length) {
+        // Agrupados por motivo: con un bloqueo del proxy salen todos en una linea.
+        const porMotivo = {};
+        for (const t of fallidos) {
+            const motivo = motivosFalloFinviz[t] || "motivo no registrado";
+            (porMotivo[motivo] = porMotivo[motivo] || []).push(t);
+        }
+        logMsg("Sin ficha de Finviz: " + fallidos.length + " de " + tickers.length + " ticker(s). Motivos:");
+        for (const motivo of Object.keys(porMotivo)) {
+            logMsg("  - " + motivo + " (" + porMotivo[motivo].length + "): " + porMotivo[motivo].join(", "));
+        }
+    }
+    const reintento = ultimoBloqueo
+        ? "Vuelve a pulsar Comparar (o recarga la pagina) a partir de las " +
+          horaLocal(ultimoBloqueo.hastaMs) + ", cuando r.jina.ai levante el bloqueo de " +
+          ultimoBloqueo.dominio + "."
+        : "Intentalo de nuevo en unos minutos.";
     if (fallidos.length === tickers.length) {
         logMsg("No se han podido descargar los datos de ningun ticker: el proxy CORS no respondio " +
-               "con la ficha de Finviz. Intentalo de nuevo en unos minutos.");
+               "con la ficha de Finviz. " + reintento);
         return;
     }
     logMsg("Comparacion finalizada para " + tickers.length + " ticker(s)" +
-           (fallidos.length ? "; sin ficha de Finviz: " + fallidos.join(", ") : "") + ".");
+           (fallidos.length ? "; " + fallidos.length + " sin ficha de Finviz. " +
+            (ultimoBloqueo ? reintento : "") : ".").trim());
 }
 
 /**
@@ -719,6 +812,9 @@ function anunciaFin(tickers, resultadosPorTicker) {
  */
 async function runComparison() {
     log.textContent = "";
+    bloqueosAvisados = new Set();
+    ultimoBloqueo = null;
+    motivosFalloFinviz = {};
     resultsThead.innerHTML = "";
     resultsTable.innerHTML = "";
     comparacionActual = null;
