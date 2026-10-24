@@ -19,12 +19,13 @@ Finviz te dice **qué** empresas pasan el filtro, pero no **por qué** una concr
 |---|---|---|
 | 🟢 Verde | `CUMPLE` | El valor de la empresa satisface la condición |
 | 🔴 Rojo | `INCUMPLE` | El valor de la empresa no satisface la condición |
+| 🟥 Rojo intenso | `INCUMPLE` | Igual que el rojo, pero en LT Debt/Eq y Market Cap, para que salten a la vista (ver [§7.2](#72-pesos-por-criterio)) |
 | 🟠 Naranja | `N/A` | El dato no está disponible, o el filtro no está soportado por la app |
 
-5. Además, antes de las filas de filtros hay una fila de **alerta de dilución** (independiente del screener): si el número de acciones en circulación de una empresa ha crecido mucho en el último año, esa celda sale en rojo con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año`, aunque el resto de filtros estén en `CUMPLE`. Ver [§6](#6-la-alerta-de-dilución-real-sec-edgar).
+5. Además, antes de las filas de filtros hay una fila de **alerta de dilución** (independiente del screener): si el número de acciones en circulación de una empresa ha crecido mucho en el último año, esa celda sale en rojo con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año`, aunque el resto de filtros estén en `CUMPLE`. Si SEC EDGAR no da datos suficientes, la celda también sale en rojo, con `(SIN DATOS: ver a mano)`: no se puede descartar la dilución y hay que revisarla a mano. Ver [§6](#6-la-alerta-de-dilución-real-sec-edgar).
 6. Encima de la fila de dilución, justo debajo de la cabecera, hay dos filas de ordenación:
    - **Orden entrada** (fondo gris claro, solo con 2 o más empresas): la posición de cada empresa en el campo "Ticker de empresas" (1, 2, 3…).
-   - **Orden por filtros cumplidos**: la puntuación de cada empresa, con pesos que priman la solvencia (ver [§7](#7-puntuación-y-orden-de-las-empresas)).
+   - **Orden por filtros cumplidos** (columna "Descripción": `Puntos`): la puntuación de cada empresa, con pesos que priman la solvencia (ver [§7](#7-puntuación-y-orden-de-las-empresas)). Por debajo de 16 puntos el número lleva el sufijo `(poco)` (p. ej. `7 (poco)`): es el umbral por debajo del cual no se compra la empresa (ver [§7.6](#76-orden-y-limitaciones)).
    - Si la empresa tiene fondos propios negativos, sus casillas de Debt/Eq y LT Debt/Eq salen en rojo con `(patrimonio negativo)` (ver [§7.4](#74-fondos-propios-negativos)).
 7. Con 2 o más empresas aparecen, bajo el botón "Comparar", los botones **Orden entrada** y **Orden por filtros cumplidos**, que recargan la tabla con las columnas en ese orden (sin volver a descargar datos). Por defecto se usa el orden de entrada.
 
@@ -175,7 +176,7 @@ Datos reales de SEC EDGAR (CIK `1858685`, concepto contable `us-gaap:CommonStock
 ### 6.2. Limitaciones funcionales de la alerta
 
 - **No distingue dilución real de un *split*.** Los datos "as filed" de SEC EDGAR no se reexpresan retroactivamente tras un desdoblamiento de acciones (que no diluye realmente, solo reparte el mismo valor en más títulos). Un split reciente puede disparar esta alerta como falso positivo.
-- **Solo cubre empresas que presentan ante la SEC.** No aplica a extranjeras que cotizan como ADR sin obligación de presentar 10-K/10-Q; en ese caso la celda simplemente sale vacía (no se asume nada).
+- **Solo cubre empresas que presentan ante la SEC.** No aplica a extranjeras que cotizan como ADR sin obligación de presentar 10-K/10-Q. En ese caso, como en cualquier otro sin datos suficientes, la celda sale en rojo con `(SIN DATOS: ver a mano)`: no resta puntos (no se asume dilución), pero la ausencia de dato no se presenta como ausencia de riesgo y hay que revisarla a mano.
 - **El umbral es fijo (20 %) y global**, no se ajusta por sector; sectores intensivos en I+D en fase pre-beneficio (biotecnología, minería junior) diluyen con más frecuencia como parte normal de su modelo de financiación. En la puntuación (§7.5) la alerta manda la empresa al final del ranking, pero su columna sigue visible con todos sus datos: es una señal de atención para revisar a mano, no un veto automático de inversión.
 
 ## 7. Puntuación y orden de las empresas
@@ -191,10 +192,10 @@ Una suma de señales binarias con el mismo peso, como el *F-score* de Piotroski 
 - Ohlson [14] (*O-score*): lo confirma con un modelo probabilístico.
 - Campbell, Hilscher y Szilagyi [15]: el apalancamiento, la rentabilidad reciente y las caídas sostenidas de la cotización son los predictores más fuertes del riesgo de impago.
 
-La valoración y los técnicos dicen poco sobre la capacidad de pago, así que quedan como desempate. El reparto resultante sobre el máximo posible (22,25 puntos) es:
+La valoración y los técnicos dicen poco sobre la capacidad de pago, así que quedan como desempate. El reparto resultante sobre el máximo posible (22,75 puntos) es:
 
-- **Solvencia pura** (LT Debt/Eq, Debt/Eq, Current Ratio): 10 puntos, ≈45 %.
-- **Capacidad de pago** (margen operativo, BPA, margen bruto): 5 puntos más, así que el bloque fundamental de pago suma ≈67 %.
+- **Solvencia pura** (LT Debt/Eq, Debt/Eq, Current Ratio): 10 puntos, ≈44 %.
+- **Capacidad de pago** (margen operativo, BPA, margen bruto): 5 puntos más, así que el bloque fundamental de pago suma ≈66 %.
 - **Resto**: valoración, propiedad y técnicos.
 
 Que los pesos sean de criterio experto y no estimados con datos no es un problema grave: los modelos lineales con pesos "impropios" (subjetivos, pero con el signo correcto) predicen casi tan bien como los ajustados y no se sobreajustan a una muestra [8].
@@ -217,14 +218,16 @@ Que los pesos sean de criterio experto y no estimados con datos no es un problem
 | Inst Own > 30 % | Propiedad | +0,5 | 0 | −0,5 | Supervisión de inversores profesionales |
 | Shs Float > 1 M | Propiedad | +0,25 | 0 | −0,25 | Liquidez bursátil, no financiera |
 | Rel Volume > 0,5 | Propiedad | +0,25 | 0 | 0 | Ruido diario |
-| Market Cap < 200 B | Descriptivo | +0,25 | 0 | **0** | Ser mega-cap no empeora la solvencia |
-| Perf 3Y > 0 % | Técnico | +0,75 | 0 | −0,75 | Caídas largas de cotización anticipan deterioro [15] |
+| Market Cap < 200 B | Descriptivo | +1 | 0 | **−1** | Criterio del usuario: se descartan las mega-caps, coherente con el efecto tamaño (a igual riesgo, las empresas grandes rinden menos [18]); no mide solvencia |
+| Perf 3Y > 0 % | Técnico | +0,5 | 0 | **0** | Criterio del usuario: suma si sube, pero una caída a 3 años no resta, aunque las caídas sostenidas anticipan deterioro [15] |
 | Perf Half Y > 0 % | Técnico | +0,5 | 0 | −0,5 | Ídem a 6 meses |
 | 52W Low > 5 % | Técnico | +0,5 | 0 | −0,5 | En mínimos anuales el mercado puede estar descontando problemas |
 | RSI (14) > 40 | Técnico | +0,25 | 0 | −0,25 | Momento de corto plazo |
 | SMA20 > 0 % | Técnico | +0,25 | 0 | −0,25 | Momento de corto plazo |
 | ATR (14) > 1 | Técnico | +0,25 | 0 | 0 | Volatilidad: no mide solvencia |
 | Dilución SEC < 20 % | Veto | 0 | 0 | **−99** | Ver §7.5 |
+
+**Rojo intenso en LT Debt/Eq y Market Cap.** Cuando una empresa incumple cualquiera de los dos (también con fondos propios negativos, §7.4), su casilla sale en rojo intenso en vez del rojo normal, para que salte a la vista. El color no cambia los puntos de la tabla de arriba (`FILTROS_ROJO_INTENSO` en `docs/logica.js`).
 
 **N/A negativo en solvencia (prudencia).** Que falte el dato de deuda o liquidez resta un punto. En P/E y Forward P/E el N/A también resta porque Finviz muestra `-` cuando el beneficio es negativo: ese N/A casi siempre es una mala noticia. En el resto de criterios el N/A es neutro.
 
@@ -263,12 +266,13 @@ Las emisiones de acciones predicen rendimientos futuros inferiores de forma pers
 - las empresas que amplían capital rinden menos que empresas comparables durante años [9];
 - la variación del número de acciones en circulación predice los rendimientos futuros con signo negativo, con más fuerza que el tamaño o la relación valor contable/precio [10].
 
-En clave de solvencia, además, diluir con fuerza suele delatar una necesidad de financiación. Por eso la alerta no se trata como "un filtro más", sino como una regla no compensatoria (lexicográfica): primero se separa a quien diluye fuerte y solo después se ordena por el resto de criterios [11]. Como la suma máxima es 22,25 puntos, −99 garantiza que ninguna combinación de casillas compense la alerta. La dilución en verde o `N/D` no suma: no diluir no es un mérito extra.
+En clave de solvencia, además, diluir con fuerza suele delatar una necesidad de financiación. Por eso la alerta no se trata como "un filtro más", sino como una regla no compensatoria (lexicográfica): primero se separa a quien diluye fuerte y solo después se ordena por el resto de criterios [11]. Como la suma máxima es 22,75 puntos, −99 garantiza que ninguna combinación de casillas compense la alerta. La dilución en verde o `(SIN DATOS: ver a mano)` no suma ni resta: no diluir no es un mérito extra, y la falta de dato se señala en rojo para revisarla a mano en vez de castigarla.
 
 ### 7.6. Orden y limitaciones
 
 - **"Orden por filtros cumplidos"** ordena de más a menos puntos; a igualdad de puntos se respeta el orden de entrada.
 - **"Orden entrada"** respeta el orden del campo "Ticker de empresas". La fila del mismo nombre deja ver ese orden original también cuando las columnas están ordenadas por puntos.
+- **Umbral de compra: 16 puntos.** Con las empresas que llegan desde el email FUTURO de [bolsa](https://github.com/carlostechinnovation/bolsa), el usuario compra solo las que tienen 16 puntos o más e ignora el resto (también las que salen sin ficha, que valen 0). Por eso las casillas por debajo de 16 llevan `(poco)` (`PUNTOS_MINIMOS_COMPRA` en `docs/logica.js`). Es un criterio de uso, no estimado con datos: 16 de un máximo de 22,75 exige, en la práctica, aprobar con holgura los tres ratios de solvencia y la capacidad de pago. Bolsa mide a posteriori la rentabilidad de esas compras (su `diseno_funcional.md`), que es lo que permitirá validar o ajustar el umbral.
 
 Limitaciones:
 - **Depende del screener elegido.** La puntuación compara empresas **entre sí** frente a ese screener; no mide calidad absoluta.
@@ -318,3 +322,5 @@ Limitaciones:
 [16] P. M. Dechow, A. P. Hutton, L. Meulbroek y R. G. Sloan, "Short-sellers, fundamental analysis, and stock returns", *Journal of Financial Economics*, 61(1), 2001, pp. 77-106.
 
 [17] B. Graham, *The Intelligent Investor*, 4.ª ed. revisada, Harper & Row, 1973, cap. 14 ("Stock Selection for the Defensive Investor").
+
+[18] R. W. Banz, "The relationship between return and market value of common stocks", *Journal of Financial Economics*, 9(1), 1981, pp. 3-18.

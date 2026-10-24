@@ -29,14 +29,15 @@ docs/                            <- raiz publicada en GitHub Pages
 ├── index.html                   formulario, botones de orden + tabla de resultados (cabecera dinamica)
 ├── logica.js                    logica pura: filtros, parseo, dilucion, puntuacion y orden (sin DOM ni red)
 ├── app.js                       DOM, descarga (fetch a los proxies) y orquestacion multi-ticker
-├── style.css                    estilos (ok / nok / na / dilucion-alerta, filas y botones de orden)
+├── style.css                    estilos (ok / nok / nok-intenso / na / dilucion-alerta, filas y botones de orden)
 ├── urls_screeners_finviz.csv    screeners predefinidos   (SCREENER|URL)
 └── descripcion_filtros.csv      glosario de campos Finviz (FILTRO|DESCRIPCION)
 tests/
 ├── logica.test.js               tests de parseo, dilucion y cola del proxy (docs/logica.js)
 └── orden.test.js                tests de evaluacion de casillas, pesos/tramos, patrimonio negativo,
-                                  puntuacion y orden de columnas,
+                                  puntuacion, sufijo "(poco)" y orden de columnas,
                                   mas comprobaciones estaticas de index.html / app.js / style.css
+                                  (dilucion sin datos en rojo, marcas data-* de lectura automatica)
 package.json                     solo para poder correr "npm test" (sin dependencias)
 README.md                        resumen para la portada de GitHub
 diseno_funcional.md              este documento hermano: el porque (con referencias)
@@ -54,6 +55,7 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
 ## 3. Flujo de ejecución (comparación multi-ticker)
 
 0. Entrada alternativa por URL: si la página se abre con `?tickers=AAA,BBB,CCC`, `app.js` precarga ese valor en el campo "Ticker de empresas" y lanza la comparación sola en cuanto termina `loadScreeners()` (con el screener por defecto, `SCREENER_POR_DEFECTO = "solventes"`), sin esperar un clic en "Comparar". Es el mecanismo que usa el email resumen de [DIIA](https://github.com/carlostechinnovation/diia) para enlazar su tabla de Selección del día ya calculada. Si además llega `?escenario=texto`, `app.js` lo escribe (con `textContent`, nunca como HTML) en el `<h2 id="escenario">` bajo el título y lo hace visible; sin el parámetro, el subtítulo queda oculto. Los emails de [bolsa](https://github.com/carlostechinnovation/bolsa) (modo futuro) y DIIA lo rellenan con `BolsaML - {fecha}` y `DIIA - {fecha}`, la misma fecha que muestra la cabecera de cada email.
+   - **Lectura automática.** Bolsa abre este mismo enlace con un navegador sin ventana antes de enviar su email FUTURO, para registrar las empresas con 16 puntos o más. Para que no tenga que interpretar textos de la página, `app.js` deja marcas que el usuario no ve: `document.body.dataset.comparacion` vale `en_curso` al empezar `runComparison()` y `terminada` al acabar todas las descargas (también si hubo un error), `document.body.dataset.bloqueoProxy` vale `1` si r.jina.ai bloqueó algún dominio durante la comparación (`0` si no), y cada celda de la fila de puntos lleva `data-ticker`, `data-puntos` (número) y `data-sin-ficha` (`1` si la ficha de Finviz falta o sigue pendiente).
 1. El usuario escribe uno o varios tickers separados por comas en el campo "Ticker de empresas" y elige un screener (o pega una URL).
 2. `leeTickers()` (`app.js`) separa por comas, recorta espacios, pasa a mayúsculas y elimina duplicados y vacíos.
 3. `leeFiltrosScreener()` extrae los códigos de filtro del parámetro `f=` de la URL del screener.
@@ -78,9 +80,9 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
    4. Pinta, con ese orden de columnas:
       - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
       - Fila `Orden entrada` (`pintaFilaOrdenEntrada`, clase `.fila-orden`, gris claro): posición 1, 2, 3… de cada ticker en el textbox. Solo si `hayVariasEmpresas` (2 o más).
-      - Fila `Orden por filtros cumplidos` (`pintaFilaPuntos`, clase `.fila-puntos`): los puntos de cada ticker.
-      - Fila de dilución (`pintaFilaDilucion` → `celdaDilucion`): verde (`.ok`) por debajo del umbral, rojo (`.dilucion-alerta`) con `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, naranja (`.na`) si no hay datos en SEC EDGAR (`N/D`).
-      - Una fila por filtro (`pintaFilaFiltro`): el valor va **dentro** de la celda de su ticker y el color (verde `.ok` / rojo `.nok` / naranja `.na`) indica `CUMPLE` / `INCUMPLE` / `N/A`.
+      - Fila `Orden por filtros cumplidos` (`pintaFilaPuntos` → `celdaPuntos`, clase `.fila-puntos`; "Condición Screener" vacía y "Descripción" = `Puntos`): los puntos de cada ticker, con el sufijo `(poco)` por debajo de `PUNTOS_MINIMOS_COMPRA` = 16 (`logica.js:textoPuntos`) y los atributos `data-*` del paso 0.
+      - Fila de dilución (`pintaFilaDilucion` → `celdaDilucion`): verde (`.ok`) por debajo del umbral, rojo (`.dilucion-alerta`) con `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, rojo (`.nok`) con `(SIN DATOS: ver a mano)` (`TEXTO_DILUCION_SIN_DATOS`) si no hay datos en SEC EDGAR, y naranja (`.na`) con `(pendiente)` mientras no han llegado.
+      - Una fila por filtro (`pintaFilaFiltro`): el valor va **dentro** de la celda de su ticker y el color (verde `.ok` / rojo `.nok` / naranja `.na`) indica `CUMPLE` / `INCUMPLE` / `N/A`. La clase la decide `logica.js:claseCasilla`: un `INCUMPLE` en los filtros de `FILTROS_ROJO_INTENSO` (LT Debt/Eq y Market Cap) usa `.nok-intenso` (rojo intenso) en vez de `.nok`.
 6. Botones **Orden entrada** / **Orden por filtros cumplidos** (`#botonesOrden`, bajo "Comparar"): `actualizaBotonesOrden()` los muestra solo con 2 o más tickers y marca el activo (`.activo`, `aria-pressed`). Al pulsar uno, `seleccionaOrden(criterio)` cambia `criterioOrden` y llama a `repinta()`: la tabla se recarga reordenando las columnas **sin volver a descargar nada**. El criterio elegido se mantiene durante las descargas en curso y en las siguientes comparaciones de la sesión (por defecto, orden de entrada).
 
 No hay ejecución programada ni tareas en segundo plano: todo ocurre **bajo demanda**, al pulsar "Comparar". No hay, por tanto, planificación temporal que documentar.
@@ -99,7 +101,7 @@ python -m http.server 8000
 npm test
 ```
 
-`package.json` no declara dependencias: `npm test` solo invoca `node --test tests/`, el test runner incorporado en Node desde la v18, que ejecuta todos los `tests/*.test.js`. Sin DOM ni red: la lógica de puntuación y orden está en `logica.js` precisamente para poder probarla así; `tests/orden.test.js` comprueba además, leyendo los ficheros, que los botones de orden están en `index.html`, que no queda rastro de `#resumen` y que `app.js` / `logica.js` siguen en ASCII puro.
+`package.json` no declara dependencias: `npm test` solo invoca `node --test tests/`, el test runner incorporado en Node desde la v18, que ejecuta todos los `tests/*.test.js`. Sin DOM ni red: la lógica de puntuación y orden está en `logica.js` precisamente para poder probarla así; `tests/orden.test.js` comprueba además, leyendo los ficheros, que los botones de orden están en `index.html`, que no queda rastro de `#resumen`, que la dilución sin datos sale en rojo con `(SIN DATOS: ver a mano)`, que existen las marcas `data-*` de lectura automática y que `app.js` / `logica.js` siguen en ASCII puro.
 
 ### Añadir un screener nuevo
 
@@ -120,4 +122,4 @@ La app solo mira el parámetro `f=` de la URL; el resto (`v`, `o`, `p`, `ft`) se
 - **Sin caché ni histórico.** Cada comparación vuelve a descargar todo; no hay seguimiento de la evolución de una empresa entre comparaciones.
 - **Coste por ticker.** Cada ticker cuesta 1 petición a Finviz y de 1 a 3 a SEC EDGAR (más una única para el mapeo ticker→CIK). La cola evita el 429, pero el tiempo total crece lineal con el número de tickers.
 - **Tickers que Finviz no cubre.** Algunas clases de acción cotizan pero no tienen ficha en Finviz (p. ej. `RUSHB`: `finviz.com` responde 404; sí existe `RUSHA`). Se muestran como "sin datos" tras un único intento.
-- **Empresas con varias clases de acción** suelen salir `N/D` en dilución: informan las acciones por clase (dato dimensional) y la API `companyconcept` de la SEC solo devuelve los datos sin dimensión.
+- **Empresas con varias clases de acción** suelen salir `(SIN DATOS: ver a mano)` en dilución: informan las acciones por clase (dato dimensional) y la API `companyconcept` de la SEC solo devuelve los datos sin dimensión.

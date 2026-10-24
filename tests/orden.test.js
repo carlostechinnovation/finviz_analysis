@@ -16,7 +16,9 @@ const {
     hayAlertaDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
     ordenaTickers, hayVariasEmpresas, extraeDatosMarkdown, compara,
     FILTROS, ORDEN, UMBRAL_DILUCION_PCT,
-    PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS
+    PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS,
+    PUNTOS_MINIMOS_COMPRA, TEXTO_DILUCION_SIN_DATOS, textoPuntos,
+    claseCasilla, CLASE_ROJO_INTENSO
 } = require("../docs/logica.js");
 
 const DOCS = path.join(__dirname, "..", "docs");
@@ -139,7 +141,7 @@ test("PESOS_FILTROS: un tramo suma si y solo si la casilla es verde", () => {
 
 test("PESOS_FILTROS: la suma maxima no llega a compensar la alerta de dilucion", () => {
     const maximo = Object.keys(PESOS_FILTROS).reduce((s, c) => s + PESOS_FILTROS[c].cumple, 0);
-    assert.equal(maximo, 22.25);
+    assert.equal(maximo, 22.75);
     assert.ok(maximo < -PUNTOS_ALERTA_DILUCION);
 });
 
@@ -184,8 +186,21 @@ test("puntosCasilla: N/A resta en solvencia y en P/E (perdidas), y es neutro en 
 test("puntosCasilla: filtros binarios usan cumple / incumple", () => {
     assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": "12%" }, "fa_opermargin_o5")), 2.5);
     assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": "2%" }, "fa_opermargin_o5")), -2.5);
-    // Ser mega-cap incumple el screener pero no resta: no empeora la solvencia.
-    assert.equal(puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "3.45T" }, "cap_largeunder")), 0);
+    assert.equal(puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "19.61M" }, "cap_largeunder")), 1);
+    assert.equal(puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "3.45T" }, "cap_largeunder")), -1);
+    // Perf 3Y suma si cumple y no resta si incumple.
+    assert.equal(puntosCasilla("ta_perf_3yup", evaluaFiltro({ "Perf 3Y": "12%" }, "ta_perf_3yup")), 0.5);
+    assert.equal(puntosCasilla("ta_perf_3yup", evaluaFiltro({ "Perf 3Y": "-12%" }, "ta_perf_3yup")), 0);
+});
+
+test("claseCasilla: rojo intenso solo al incumplir LT Debt/Eq o Market Cap", () => {
+    assert.equal(claseCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "3.14" }, "fa_ltdebteq_u1")), CLASE_ROJO_INTENSO);
+    assert.equal(claseCasilla("fa_ltdebteq_u1",
+        evaluaFiltro({ "Book/sh": "-6.73", "LT Debt/Eq": "-" }, "fa_ltdebteq_u1")), CLASE_ROJO_INTENSO);
+    assert.equal(claseCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "3.45T" }, "cap_largeunder")), CLASE_ROJO_INTENSO);
+    assert.equal(claseCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "0.2" }, "fa_ltdebteq_u1")), "ok");
+    assert.equal(claseCasilla("cap_largeunder", evaluaFiltro({}, "cap_largeunder")), "na");
+    assert.equal(claseCasilla("fa_debteq_u1", evaluaFiltro({ "Debt/Eq": "3.77" }, "fa_debteq_u1")), "nok");
 });
 
 test("puntosCasilla: los ratios de solvencia puntuan por tramos", () => {
@@ -260,7 +275,36 @@ test("hayVariasEmpresas: fila 'Orden entrada' y botones solo con 2 empresas o ma
     assert.equal(hayVariasEmpresas(55), true);
 });
 
+// --- Texto de la casilla de puntos ---
+
+test("textoPuntos: por debajo de 16 puntos se anade '(poco)'", () => {
+    assert.equal(PUNTOS_MINIMOS_COMPRA, 16);
+    assert.equal(textoPuntos(7), "7 (poco)");
+    assert.equal(textoPuntos(15.75), "15.75 (poco)");
+    assert.equal(textoPuntos(0), "0 (poco)");
+    assert.equal(textoPuntos(-89), "-89 (poco)");
+    assert.equal(textoPuntos(16), "16");
+    assert.equal(textoPuntos(19.5), "19.5");
+});
+
 // --- Comprobaciones estaticas de la pagina ---
+
+test("app.js: dilucion sin datos en rojo con '(SIN DATOS: ver a mano)'", () => {
+    const app = fs.readFileSync(path.join(DOCS, "app.js"), "utf8");
+    assert.equal(TEXTO_DILUCION_SIN_DATOS, "(SIN DATOS: ver a mano)");
+    assert.match(app, /if \(!d\) return celda\(TEXTO_DILUCION_SIN_DATOS, "nok"\);/);
+    assert.equal(app.includes('celda("N/D"'), false);
+});
+
+test("app.js: marcas invisibles para lectura automatica (puntos y fin de la comparacion)", () => {
+    const app = fs.readFileSync(path.join(DOCS, "app.js"), "utf8");
+    assert.match(app, /data-ticker="/);
+    assert.match(app, /data-puntos="/);
+    assert.match(app, /data-sin-ficha="/);
+    assert.match(app, /document\.body\.dataset\.comparacion = "en_curso"/);
+    assert.match(app, /document\.body\.dataset\.comparacion = "terminada"/);
+    assert.match(app, /document\.body\.dataset\.bloqueoProxy = ultimoBloqueo \? "1" : "0"/);
+});
 
 test("index.html: los dos botones de orden van tras 'Comparar' y ya no existe #resumen", () => {
     const html = fs.readFileSync(path.join(DOCS, "index.html"), "utf8");

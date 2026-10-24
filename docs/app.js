@@ -542,7 +542,7 @@ function urlFinvizSemanal(ticker) {
 /**
  * HTML de una celda de datos.
  * @param {*} texto Contenido (se escapa).
- * @param {string} [clase] Clase CSS (ok / nok / na / dilucion-alerta).
+ * @param {string} [clase] Clase CSS (ok / nok / nok-intenso / na / dilucion-alerta).
  * @returns {string} HTML del <td>.
  */
 function celda(texto, clase) {
@@ -591,30 +591,44 @@ function pintaFilaOrdenEntrada(columnas, tickers) {
 }
 
 /**
+ * Celda de puntos de un ticker: el texto de textoPuntos y, para lectura
+ * automatica (p. ej. el backtest de bolsa con un navegador sin ventana),
+ * atributos data-* que el usuario no ve: data-ticker, data-puntos y
+ * data-sin-ficha ("1" si la ficha de Finviz falta o sigue pendiente).
+ * @param {string} ticker Ticker de la columna.
+ * @param {number} puntos Puntos del ticker.
+ * @param {boolean} sinFicha true si no hay ficha de Finviz.
+ * @returns {string} HTML del <td>.
+ */
+function celdaPuntos(ticker, puntos, sinFicha) {
+    return '<td data-ticker="' + textoPlano(ticker) + '" data-puntos="' + textoPlano(puntos) +
+        '" data-sin-ficha="' + (sinFicha ? "1" : "0") + '">' + textoPlano(textoPuntos(puntos)) + "</td>";
+}
+
+/**
  * Fila "Orden por filtros cumplidos": puntos de cada ticker.
  * @param {string[]} columnas Tickers en el orden de presentacion.
  * @param {Object<string,number>} puntos ticker -> puntos.
+ * @param {Object} resultadosPorTicker ticker -> { datos, dilucion }.
  */
-function pintaFilaPuntos(columnas, puntos) {
+function pintaFilaPuntos(columnas, puntos, resultadosPorTicker) {
     anadeFila(
-        ["Orden por filtros cumplidos", "M\u00e1s puntos = mejor",
-         "Pesos que priman la solvencia: LT Debt/Eq, Debt/Eq y Current Ratio punt\u00faan por " +
-         "tramos; " + PUNTOS_ALERTA_DILUCION + " por alerta de diluci\u00f3n; 0 si no hay ficha. " +
-         "Ver diseno_funcional.md \u00a77."],
-        columnas.map(t => celda(puntos[t])),
+        ["Orden por filtros cumplidos", "", "Puntos"],
+        columnas.map(t => celdaPuntos(t, puntos[t], !resultadosPorTicker[t].datos)),
         "fila-puntos");
 }
 
 /**
  * Celda de dilucion de un ticker: verde por debajo del umbral, roja con el
- * aviso si lo supera, naranja si no hay datos o aun no han llegado.
+ * aviso si lo supera, roja con TEXTO_DILUCION_SIN_DATOS si SEC EDGAR no da
+ * datos (hay que revisarla a mano) y naranja mientras no han llegado.
  * @param {Object|null|undefined} d Resultado de compruebaDilucion
  *     (undefined = pendiente).
  * @returns {string} HTML del <td>.
  */
 function celdaDilucion(d) {
     if (d === undefined) return celda("(pendiente)", "na");
-    if (!d) return celda("N/D", "na");
+    if (!d) return celda(TEXTO_DILUCION_SIN_DATOS, "nok");
     const pctTexto = (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
     if (hayAlertaDilucion(d)) {
         return celda("ALERTA POR DILUCI\u00d3N: " + pctTexto + " en 1 a\u00f1o", "dilucion-alerta");
@@ -631,7 +645,8 @@ function pintaFilaDilucion(columnas, resultadosPorTicker) {
     anadeFila(
         ["Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)", "< " + UMBRAL_DILUCION_PCT + "% de aumento",
          "Aumento de acciones en circulaci\u00f3n en ~1 a\u00f1o, seg\u00fan SEC EDGAR " +
-         "(no Finviz). N/D = sin datos suficientes en SEC EDGAR. Ver diseno_funcional.md \u00a76."],
+         "(no Finviz). " + TEXTO_DILUCION_SIN_DATOS + " = sin datos suficientes en SEC EDGAR: " +
+         "revisar la diluci\u00f3n a mano. Ver diseno_funcional.md \u00a76."],
         columnas.map(t => celdaDilucion(resultadosPorTicker[t].dilucion)));
 }
 
@@ -647,7 +662,7 @@ function pintaFilaFiltro(codigo, columnas, evaluacionesFiltro, descripciones) {
     const etiqueta = def ? def.finviz : codigo;
     anadeFila(
         [etiqueta, def ? def.texto : "(filtro no soportado)", buscaDescripcion(descripciones, etiqueta)],
-        columnas.map(t => celda(evaluacionesFiltro[t].texto, evaluacionesFiltro[t].estado)));
+        columnas.map(t => celda(evaluacionesFiltro[t].texto, claseCasilla(codigo, evaluacionesFiltro[t]))));
 }
 
 /**
@@ -668,7 +683,7 @@ function pintaMultiTicker(comparacion) {
     pintaCabecera(columnas);
     resultsTable.innerHTML = "";
     if (hayVariasEmpresas(tickers.length)) pintaFilaOrdenEntrada(columnas, tickers);
-    pintaFilaPuntos(columnas, puntos);
+    pintaFilaPuntos(columnas, puntos, resultados);
     pintaFilaDilucion(columnas, resultados);
     for (const codigo of codigos) {
         pintaFilaFiltro(codigo, columnas, evaluaciones[codigo], comparacion.descripciones);
@@ -811,6 +826,11 @@ function anunciaFin(tickers, resultadosPorTicker) {
  * @returns {Promise<void>}
  */
 async function runComparison() {
+    // Marcas invisibles para lectura automatica: "en_curso" hasta que terminan
+    // todas las descargas y "terminada" despues (tambien si hubo error), y
+    // bloqueoProxy = "1" si r.jina.ai bloqueo algun dominio en la comparacion.
+    document.body.dataset.comparacion = "en_curso";
+    document.body.dataset.bloqueoProxy = "0";
     log.textContent = "";
     bloqueosAvisados = new Set();
     ultimoBloqueo = null;
@@ -843,6 +863,8 @@ async function runComparison() {
         logMsg("Error inesperado: " + e.message);
     } finally {
         compareBtn.disabled = false;
+        document.body.dataset.bloqueoProxy = ultimoBloqueo ? "1" : "0";
+        document.body.dataset.comparacion = "terminada";
     }
 }
 

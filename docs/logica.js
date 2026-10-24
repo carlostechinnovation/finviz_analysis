@@ -559,11 +559,11 @@ const PESOS_FILTROS = {
     "sh_float_o1":    { cumple: 0.25, na: 0, incumple: -0.25 },
     "sh_relvol_o0.5": { cumple: 0.25, na: 0, incumple: 0 },
 
-    // --- Descriptivo: ser mega-cap no empeora la solvencia ---
-    "cap_largeunder": { cumple: 0.25, na: 0, incumple: 0 },
+    // --- Descriptivo: ser mega-cap resta (criterio del usuario) ---
+    "cap_largeunder": { cumple: 1, na: 0, incumple: -1 },
 
     // --- Tecnicos (desempate) ---
-    "ta_perf_3yup":           { cumple: 0.75, na: 0, incumple: -0.75 },
+    "ta_perf_3yup":           { cumple: 0.5,  na: 0, incumple: 0 },
     "ta_perf2_26wup":         { cumple: 0.5,  na: 0, incumple: -0.5 },
     "ta_highlow52w_a5h":      { cumple: 0.5,  na: 0, incumple: -0.5 },
     "ta_rsi_nos40":           { cumple: 0.25, na: 0, incumple: -0.25 },
@@ -571,6 +571,15 @@ const PESOS_FILTROS = {
     "ta_averagetruerange_o1": { cumple: 0.25, na: 0, incumple: 0 }
 };
 const PUNTOS_ALERTA_DILUCION = -99;
+// Filtros cuya casilla incumplida se pinta en rojo intenso (criterio del usuario).
+const FILTROS_ROJO_INTENSO = ["fa_ltdebteq_u1", "cap_largeunder"];
+const CLASE_ROJO_INTENSO = "nok-intenso";
+// Por debajo de estos puntos la empresa no se compra (criterio del usuario con
+// los emails de bolsa): su casilla de puntos lleva el sufijo "(poco)".
+const PUNTOS_MINIMOS_COMPRA = 16;
+const SUFIJO_POCOS_PUNTOS = "(poco)";
+// Fila de dilucion sin datos en SEC EDGAR: se pinta en rojo para revisarla a mano.
+const TEXTO_DILUCION_SIN_DATOS = "(SIN DATOS: ver a mano)";
 const ETIQUETA_VALOR_CONTABLE = "Book/sh";
 const ORDEN_ENTRADA = "entrada";
 const ORDEN_PUNTOS = "puntos";
@@ -638,6 +647,18 @@ function evaluaFiltro(datos, codigo) {
         return { texto: texto + " (patrimonio negativo)", estado: "nok", patrimonioNegativo: true };
     }
     return { texto: texto, estado: estadoDeValor(bruto, def), valor: valor };
+}
+
+/**
+ * Clase CSS de una casilla de filtro: su estado, salvo que incumpla un filtro
+ * de FILTROS_ROJO_INTENSO, que se pinta con CLASE_ROJO_INTENSO.
+ * @param {string} codigo Codigo del filtro.
+ * @param {Object} evaluacion Salida de evaluaFiltro.
+ * @returns {string} "ok", "nok", "na" o CLASE_ROJO_INTENSO.
+ */
+function claseCasilla(codigo, evaluacion) {
+    if (evaluacion.estado === "nok" && FILTROS_ROJO_INTENSO.includes(codigo)) return CLASE_ROJO_INTENSO;
+    return evaluacion.estado;
 }
 
 /**
@@ -727,6 +748,18 @@ function calculaPuntosPorTicker(tickers, evaluaciones, resultadosPorTicker) {
 }
 
 /**
+ * Texto de la casilla de puntos: el numero y, por debajo de
+ * PUNTOS_MINIMOS_COMPRA, el sufijo "(poco)" (p. ej. "7 (poco)").
+ * @param {number} puntos Puntos de la empresa.
+ * @returns {string} Texto a mostrar.
+ */
+function textoPuntos(puntos) {
+    return puntos < PUNTOS_MINIMOS_COMPRA
+        ? String(puntos) + " " + SUFIJO_POCOS_PUNTOS
+        : String(puntos);
+}
+
+/**
  * Orden de las columnas de empresas segun el criterio elegido.
  * ORDEN_ENTRADA respeta el textbox; ORDEN_PUNTOS ordena de mas a menos
  * puntos y, a igualdad, por orden de entrada.
@@ -767,6 +800,8 @@ if (typeof module !== "undefined" && module.exports) {
         creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
         minutosEstimados,
         PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ETIQUETA_VALOR_CONTABLE,
+        FILTROS_ROJO_INTENSO, CLASE_ROJO_INTENSO, claseCasilla,
+        PUNTOS_MINIMOS_COMPRA, SUFIJO_POCOS_PUNTOS, TEXTO_DILUCION_SIN_DATOS, textoPuntos,
         ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
         ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
         hayAlertaDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
