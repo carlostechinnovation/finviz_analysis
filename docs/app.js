@@ -643,10 +643,7 @@ function celdaDilucion(d) {
  */
 function pintaFilaDilucion(columnas, resultadosPorTicker) {
     anadeFila(
-        ["Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)", "< " + UMBRAL_DILUCION_PCT + "% de aumento",
-         "Aumento de acciones en circulaci\u00f3n en ~1 a\u00f1o, seg\u00fan SEC EDGAR " +
-         "(no Finviz). " + TEXTO_DILUCION_SIN_DATOS + " = sin datos suficientes en SEC EDGAR: " +
-         "revisar la diluci\u00f3n a mano. Ver diseno_funcional.md \u00a76."],
+        ["Diluci\u00f3n en 1 a\u00f1o (SEC EDGAR)", "< " + UMBRAL_DILUCION_PCT + "% de aumento", ""],
         columnas.map(t => celdaDilucion(resultadosPorTicker[t].dilucion)));
 }
 
