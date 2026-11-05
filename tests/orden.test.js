@@ -13,7 +13,7 @@ const path = require("node:path");
 
 const {
     ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
-    hayAlertaDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
+    hayAlertaDilucion, estadoDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
     ordenaTickers, hayVariasEmpresas, extraeDatosMarkdown, compara,
     FILTROS, ORDEN, UMBRAL_DILUCION_PCT,
     PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS,
@@ -215,6 +215,14 @@ test("puntosCasilla: patrimonio negativo vale el peor tramo", () => {
     assert.equal(puntosCasilla("fa_debteq_u1", evaluaFiltro(datos, "fa_debteq_u1")), -3);
 });
 
+test("estadoDilucion: distingue alerta, sin alerta, sin datos y pendiente", () => {
+    assert.equal(estadoDilucion({ pct: UMBRAL_DILUCION_PCT }), "alerta");
+    assert.equal(estadoDilucion({ pct: 19.9 }), "ok");
+    assert.equal(estadoDilucion({ pct: -5 }), "ok");
+    assert.equal(estadoDilucion(null), "sin_datos");
+    assert.equal(estadoDilucion(undefined), "pendiente");
+});
+
 test("hayAlertaDilucion: solo a partir del umbral; sin datos o pendiente no es alerta", () => {
     assert.equal(hayAlertaDilucion({ pct: UMBRAL_DILUCION_PCT }), true);
     assert.equal(hayAlertaDilucion({ pct: 40.1 }), true);
@@ -301,6 +309,7 @@ test("app.js: marcas invisibles para lectura automatica (puntos y fin de la comp
     assert.match(app, /data-ticker="/);
     assert.match(app, /data-puntos="/);
     assert.match(app, /data-sin-ficha="/);
+    assert.match(app, /data-dilucion="/);
     assert.match(app, /document\.body\.dataset\.comparacion = "en_curso"/);
     assert.match(app, /document\.body\.dataset\.comparacion = "terminada"/);
     assert.match(app, /document\.body\.dataset\.bloqueoProxy = ultimoBloqueo \? "1" : "0"/);

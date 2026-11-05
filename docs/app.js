@@ -593,16 +593,19 @@ function pintaFilaOrdenEntrada(columnas, tickers) {
 /**
  * Celda de puntos de un ticker: el texto de textoPuntos y, para lectura
  * automatica (p. ej. el backtest de bolsa con un navegador sin ventana),
- * atributos data-* que el usuario no ve: data-ticker, data-puntos y
- * data-sin-ficha ("1" si la ficha de Finviz falta o sigue pendiente).
+ * atributos data-* que el usuario no ve: data-ticker, data-puntos,
+ * data-sin-ficha ("1" si la ficha de Finviz falta o sigue pendiente) y
+ * data-dilucion (estadoDilucion).
  * @param {string} ticker Ticker de la columna.
  * @param {number} puntos Puntos del ticker.
  * @param {boolean} sinFicha true si no hay ficha de Finviz.
+ * @param {string} dilucion Salida de estadoDilucion.
  * @returns {string} HTML del <td>.
  */
-function celdaPuntos(ticker, puntos, sinFicha) {
+function celdaPuntos(ticker, puntos, sinFicha, dilucion) {
     return '<td data-ticker="' + textoPlano(ticker) + '" data-puntos="' + textoPlano(puntos) +
-        '" data-sin-ficha="' + (sinFicha ? "1" : "0") + '">' + textoPlano(textoPuntos(puntos)) + "</td>";
+        '" data-sin-ficha="' + (sinFicha ? "1" : "0") + '" data-dilucion="' + dilucion + '">' +
+        textoPlano(textoPuntos(puntos)) + "</td>";
 }
 
 /**
@@ -614,7 +617,8 @@ function celdaPuntos(ticker, puntos, sinFicha) {
 function pintaFilaPuntos(columnas, puntos, resultadosPorTicker) {
     anadeFila(
         ["Orden por filtros cumplidos", "", "Puntos"],
-        columnas.map(t => celdaPuntos(t, puntos[t], !resultadosPorTicker[t].datos)),
+        columnas.map(t => celdaPuntos(t, puntos[t], !resultadosPorTicker[t].datos,
+            estadoDilucion(resultadosPorTicker[t].dilucion))),
         "fila-puntos");
 }
 

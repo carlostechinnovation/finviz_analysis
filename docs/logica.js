@@ -689,6 +689,20 @@ function hayAlertaDilucion(dilucion) {
 }
 
 /**
+ * Estado de la dilucion para lectura automatica (data-dilucion de la fila de
+ * puntos): asi bolsa distingue "sin alerta" de "sin datos en SEC EDGAR", que
+ * valen lo mismo en puntos.
+ * @param {Object|null|undefined} dilucion Resultado de calculaDilucion
+ *     (null = sin datos, undefined = pendiente).
+ * @returns {string} "pendiente", "sin_datos", "alerta" u "ok".
+ */
+function estadoDilucion(dilucion) {
+    if (dilucion === undefined) return "pendiente";
+    if (!dilucion) return "sin_datos";
+    return hayAlertaDilucion(dilucion) ? "alerta" : "ok";
+}
+
+/**
  * Puntos del primer tramo cuya comparacion cumple el valor.
  * @param {Array<{op:string, limite:number, puntos:number}>} tramos Tramos.
  * @param {number} valor Valor del ratio.
@@ -804,7 +818,7 @@ if (typeof module !== "undefined" && module.exports) {
         PUNTOS_MINIMOS_COMPRA, SUFIJO_POCOS_PUNTOS, TEXTO_DILUCION_SIN_DATOS, textoPuntos,
         ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
         ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
-        hayAlertaDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
+        hayAlertaDilucion, estadoDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
         ordenaTickers, hayVariasEmpresas
     };
 }
