@@ -109,12 +109,15 @@ test("PESOS_FILTROS: todos los filtros soportados tienen pesos", () => {
     }
 });
 
-test("PESOS_FILTROS: la solvencia pesa mas que cualquier otro criterio", () => {
+test("PESOS_FILTROS: LT Debt/Eq es el criterio que mas pesa y la solvencia el bloque que mas pesa", () => {
     const solvencia = ["fa_ltdebteq_u1", "fa_debteq_u1", "fa_curratio_o1"];
-    const resto = Object.keys(PESOS_FILTROS).filter(c => !solvencia.includes(c));
-    const maxResto = Math.max(...resto.map(c => PESOS_FILTROS[c].cumple));
-    for (const c of solvencia) assert.ok(PESOS_FILTROS[c].cumple > maxResto, c);
-    assert.ok(PESOS_FILTROS["fa_ltdebteq_u1"].cumple > PESOS_FILTROS["fa_debteq_u1"].cumple);
+    const pago = ["fa_opermargin_o5", "fa_epsyoyttm_pos", "fa_grossmargin_o10"];
+    const suma = codigos => codigos.reduce((s, c) => s + PESOS_FILTROS[c].cumple, 0);
+    const otros = Object.keys(PESOS_FILTROS).filter(c => c !== "fa_ltdebteq_u1");
+    assert.ok(PESOS_FILTROS["fa_ltdebteq_u1"].cumple > Math.max(...otros.map(c => PESOS_FILTROS[c].cumple)));
+    assert.ok(suma(solvencia) > suma(pago));
+    const resto = Object.keys(PESOS_FILTROS).filter(c => !solvencia.includes(c) && !pago.includes(c));
+    assert.ok(suma(solvencia) > suma(resto));
 });
 
 test("PESOS_FILTROS: en los tramos, cumple e incumple son el mejor y el peor tramo", () => {
@@ -132,17 +135,91 @@ test("PESOS_FILTROS: un tramo suma si y solo si la casilla es verde", () => {
         const peso = PESOS_FILTROS[codigo];
         if (!peso.tramos) continue;
         const def = FILTROS[codigo];
-        for (let v = 0; v <= 5; v = Math.round((v + 0.01) * 100) / 100) {
+        // Cada limite y sus alrededores, en la escala propia del filtro.
+        const limites = [def.valor, ...peso.tramos.map(t => t.limite)];
+        const valores = limites.flatMap(l => [l, l - 0.01, l + 0.01, l * 0.999, l * 1.001]);
+        for (const v of valores) {
             const cumple = compara(v, def.op, def.valor);
             assert.equal(puntosTramo(peso.tramos, v) > 0, cumple, codigo + " con " + v);
         }
     }
 });
 
+test("PESOS_FILTROS: fuera de la solvencia, 'mucho' vale casi el doble que 'poco'", () => {
+    const solvencia = ["fa_ltdebteq_u1", "fa_debteq_u1", "fa_curratio_o1"];
+    const casiDoble = (mucho, poco, etiqueta) => {
+        const razon = mucho / poco;
+        assert.ok(razon >= 1.7 && razon < 2, etiqueta + ": razon " + razon);
+    };
+    for (const codigo of Object.keys(PESOS_FILTROS)) {
+        const peso = PESOS_FILTROS[codigo];
+        if (!peso.tramos || solvencia.includes(codigo)) continue;
+        const suman = peso.tramos.map(t => t.puntos).filter(p => p > 0);
+        const restan = peso.tramos.map(t => t.puntos).filter(p => p < 0);
+        casiDoble(Math.max(...suman), Math.min(...suman), codigo + " cumple");
+        if (restan.length) casiDoble(Math.min(...restan), Math.max(...restan), codigo + " incumple");
+    }
+});
+
+test("PESOS_FILTROS: P/S, Rel Volume y ATR no tienen grados (cumplirlos mucho no es mejor)", () => {
+    for (const codigo of ["fa_ps_o2", "sh_relvol_o0.5", "ta_averagetruerange_o1"]) {
+        assert.equal(PESOS_FILTROS[codigo].tramos, undefined, codigo);
+    }
+});
+
+test("PESOS_FILTROS: el N/A de P/E y Forward P/E (perdidas) resta mas que incumplir mucho", () => {
+    for (const codigo of ["fa_pe_u30", "fa_fpe_u20"]) {
+        assert.ok(PESOS_FILTROS[codigo].na < PESOS_FILTROS[codigo].incumple, codigo);
+    }
+});
+
 test("PESOS_FILTROS: la suma maxima no llega a compensar la alerta de dilucion", () => {
     const maximo = Object.keys(PESOS_FILTROS).reduce((s, c) => s + PESOS_FILTROS[c].cumple, 0);
-    assert.equal(maximo, 22.75);
+    assert.equal(Math.round(maximo * 100) / 100, 26.31);
     assert.ok(maximo < -PUNTOS_ALERTA_DILUCION);
+});
+
+test("puntosTramo: los limites de los criterios con grados", () => {
+    const casos = {
+        fa_opermargin_o5:   [[20, 3.25], [19.99, 1.75], [5.01, 1.75], [5, -1.75], [0, -1.75], [-0.01, -3.25]],
+        fa_epsyoyttm_pos:   [[40, 1.95], [39.9, 1.05], [0.01, 1.05], [0, -1.05], [-50, -1.05], [-50.01, -1.95]],
+        fa_grossmargin_o10: [[45, 1.3], [44.9, 0.7], [10.01, 0.7], [10, -0.7], [0, -0.7], [-0.24, -1.3]],
+        fa_fpe_u20:         [[11.99, 1.3], [12, 0.7], [19.99, 0.7], [20, -0.35], [30, -0.35], [30.01, -0.65]],
+        fa_pe_u30:          [[14.99, 0.95], [15, 0.55], [29.99, 0.55], [30, -0.35], [50, -0.35], [50.01, -0.65]],
+        fa_evsales_u6:      [[1.99, 0.65], [2, 0.35], [5.99, 0.35], [6, -0.35], [10, -0.35], [10.01, -0.65]],
+        sh_short_u10:       [[3.99, 1.3], [4, 0.7], [9.99, 0.7], [10, -0.7], [15, -0.7], [15.01, -1.3]],
+        sh_instown_o30:     [[85, 0.65], [84.9, 0.35], [30.01, 0.35], [30, -0.35], [15, -0.35], [14.9, -0.65]],
+        sh_float_o1:        [[100e6, 0.32], [99e6, 0.18], [1.01e6, 0.18], [1e6, -0.18], [0.5e6, -0.18], [0.4e6, -0.32]],
+        ta_perf2_26wup:     [[15, 0.65], [14.9, 0.35], [0.01, 0.35], [0, -0.35], [-20, -0.35], [-20.01, -0.65]],
+        ta_highlow52w_a5h:  [[40, 0.65], [39.9, 0.35], [5.01, 0.35], [5, -0.35], [2, -0.35], [1.99, -0.65]],
+        ta_sma20_pa:        [[5, 0.32], [4.99, 0.18], [0.01, 0.18], [0, -0.18], [-8, -0.18], [-8.01, -0.32]]
+    };
+    for (const codigo of Object.keys(casos)) {
+        for (const [valor, puntos] of casos[codigo]) {
+            assert.equal(puntosTramo(PESOS_FILTROS[codigo].tramos, valor), puntos, codigo + " con " + valor);
+        }
+    }
+});
+
+test("puntosTramo: Market Cap premia 2B-50B y castiga mas a partir de 500B", () => {
+    const tramos = PESOS_FILTROS["cap_largeunder"].tramos;
+    const casos = [[19.61e6, 0.7], [1.99e9, 0.7], [2e9, 1.3], [49.9e9, 1.3], [50e9, 0.7], [198.3e9, 0.7],
+                   [200e9, -0.7], [500e9, -0.7], [501e9, -1.3], [3.45e12, -1.3]];
+    for (const [valor, puntos] of casos) assert.equal(puntosTramo(tramos, valor), puntos, "valor " + valor);
+});
+
+test("puntosTramo: RSI vale menos en sobrecompra (> 70) y resta por debajo de 40", () => {
+    const tramos = PESOS_FILTROS["ta_rsi_nos40"].tramos;
+    const casos = [[79.14, 0.18], [70.01, 0.18], [70, 0.32], [55, 0.32], [54.99, 0.18], [40.01, 0.18],
+                   [40, -0.18], [30, -0.18], [29.99, -0.32]];
+    for (const [valor, puntos] of casos) assert.equal(puntosTramo(tramos, valor), puntos, "valor " + valor);
+});
+
+test("puntosTramo: Perf 3Y suma por grados y una caida nunca resta, sea poca o mucha", () => {
+    const tramos = PESOS_FILTROS["ta_perf_3yup"].tramos;
+    const casos = [[103.66, 0.65], [75, 0.65], [74.9, 0.35], [0.01, 0.35], [0, 0], [-12, 0], [-80, 0]];
+    for (const [valor, puntos] of casos) assert.equal(puntosTramo(tramos, valor), puntos, "valor " + valor);
+    assert.equal(PESOS_FILTROS["ta_perf_3yup"].incumple, 0);
 });
 
 test("puntosTramo: LT Debt/Eq por tramos (< 0.3, 0.3-0.6, 0.6-1, 1-2, > 2)", () => {
@@ -183,14 +260,29 @@ test("puntosCasilla: N/A resta en solvencia y en P/E (perdidas), y es neutro en 
     assert.equal(puntosCasilla("ta_rsi_nos40", evaluaFiltro({}, "ta_rsi_nos40")), 0);
 });
 
-test("puntosCasilla: filtros binarios usan cumple / incumple", () => {
-    assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": "12%" }, "fa_opermargin_o5")), 2.5);
-    assert.equal(puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": "2%" }, "fa_opermargin_o5")), -2.5);
-    assert.equal(puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "19.61M" }, "cap_largeunder")), 1);
-    assert.equal(puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "3.45T" }, "cap_largeunder")), -1);
-    // Perf 3Y suma si cumple y no resta si incumple.
-    assert.equal(puntosCasilla("ta_perf_3yup", evaluaFiltro({ "Perf 3Y": "12%" }, "ta_perf_3yup")), 0.5);
-    assert.equal(puntosCasilla("ta_perf_3yup", evaluaFiltro({ "Perf 3Y": "-12%" }, "ta_perf_3yup")), 0);
+test("puntosCasilla: filtros sin grados usan cumple / incumple", () => {
+    assert.equal(puntosCasilla("fa_ps_o2", evaluaFiltro({ "P/S": "4.28" }, "fa_ps_o2")), 0.25);
+    assert.equal(puntosCasilla("fa_ps_o2", evaluaFiltro({ "P/S": "0.91" }, "fa_ps_o2")), -0.25);
+    assert.equal(puntosCasilla("sh_relvol_o0.5", evaluaFiltro({ "Rel Volume": "1.41" }, "sh_relvol_o0.5")), 0.25);
+    assert.equal(puntosCasilla("sh_relvol_o0.5", evaluaFiltro({ "Rel Volume": "0.2" }, "sh_relvol_o0.5")), 0);
+    assert.equal(puntosCasilla("ta_averagetruerange_o1", evaluaFiltro({ "ATR (14)": "2.71" }, "ta_averagetruerange_o1")), 0.25);
+    assert.equal(puntosCasilla("ta_averagetruerange_o1", evaluaFiltro({ "ATR (14)": "0.46" }, "ta_averagetruerange_o1")), 0);
+});
+
+test("puntosCasilla: los criterios con grados distinguen poco de mucho, en verde y en rojo", () => {
+    const oper = v => puntosCasilla("fa_opermargin_o5", evaluaFiltro({ "Oper. Margin": v }, "fa_opermargin_o5"));
+    assert.equal(oper("35.51%"), 3.25);
+    assert.equal(oper("12%"), 1.75);
+    assert.equal(oper("2%"), -1.75);
+    assert.equal(oper("-3.53%"), -3.25);
+    const cap = v => puntosCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": v }, "cap_largeunder"));
+    assert.equal(cap("19.61M"), 0.7);
+    assert.equal(cap("36.02B"), 1.3);
+    assert.equal(cap("423.3B"), -0.7);
+    assert.equal(cap("3.45T"), -1.3);
+    const perf = v => puntosCasilla("ta_perf_3yup", evaluaFiltro({ "Perf 3Y": v }, "ta_perf_3yup"));
+    assert.equal(perf("12%"), 0.35);
+    assert.equal(perf("-12%"), 0);
 });
 
 test("claseCasilla: rojo intenso solo al incumplir LT Debt/Eq o Market Cap", () => {
@@ -237,9 +329,49 @@ test("puntosEmpresa: suma las casillas; la alerta de dilucion resta 99 y sin ale
         fa_ltdebteq_u1: evaluaFiltro({ "LT Debt/Eq": "0.2" }, "fa_ltdebteq_u1"),
         fa_pe_u30: evaluaFiltro({ "P/E": "45" }, "fa_pe_u30")
     };
-    assert.equal(puntosEmpresa(ev, false), 3.5);
-    assert.equal(puntosEmpresa(ev, true), -95.5);
+    assert.equal(puntosEmpresa(ev, false), 3.65);
+    assert.equal(puntosEmpresa(ev, true), -95.35);
     assert.equal(puntosEmpresa({}, false), 0);
+});
+
+test("puntosEmpresa: redondea a 2 decimales, sin restos de coma flotante", () => {
+    // Sin redondear, 0.7 + 0.35 + 0.18 + 0.32 da 1.5499999999999998.
+    const ev = {
+        sh_short_u10: evaluaFiltro({ "Short Float": "5%" }, "sh_short_u10"),
+        fa_evsales_u6: evaluaFiltro({ "EV/Sales": "3" }, "fa_evsales_u6"),
+        ta_sma20_pa: evaluaFiltro({ "SMA20": "2%" }, "ta_sma20_pa"),
+        sh_float_o1: evaluaFiltro({ "Shs Float": "200M" }, "sh_float_o1")
+    };
+    assert.equal(puntosEmpresa(ev, false), 1.55);
+    // Con todos los filtros en su mejor tramo, el total es exactamente el maximo.
+    const mejor = {};
+    const fichaMejor = {
+        "Market Cap": "10B", "P/E": "10", "Forward P/E": "10", "P/S": "3", "EV/Sales": "1",
+        "Gross Margin": "50%", "Oper. Margin": "25%", "Current Ratio": "2.5", "Debt/Eq": "0.1",
+        "LT Debt/Eq": "0.1", "EPS Y/Y TTM": "50%", "Inst Own": "90%", "Shs Float": "200M",
+        "Short Float": "1%", "Rel Volume": "1", "ATR (14)": "2", "RSI (14)": "60", "SMA20": "6%",
+        "52W Low": "50%", "Perf Half Y": "20%", "Perf 3Y": "80%"
+    };
+    for (const codigo of Object.keys(FILTROS)) mejor[codigo] = evaluaFiltro(fichaMejor, codigo);
+    assert.equal(puntosEmpresa(mejor, false), 26.31);
+    assert.equal(textoPuntos(puntosEmpresa(mejor, false)), "26.31");
+});
+
+test("puntosEmpresa: pasar todos los filtros justo por el borde da 13.69, por debajo de 16", () => {
+    // Antes, pasar el screener garantizaba 17.25 o mas. Ver diseno_funcional.md SS7.7.
+    const fichaBorde = {
+        "Market Cap": "100B", "P/E": "25", "Forward P/E": "18", "P/S": "3", "EV/Sales": "5",
+        "Gross Margin": "20%", "Oper. Margin": "10%", "Current Ratio": "1.2", "Debt/Eq": "0.8",
+        "LT Debt/Eq": "0.8", "EPS Y/Y TTM": "10%", "Inst Own": "50%", "Shs Float": "50M",
+        "Short Float": "8%", "Rel Volume": "1", "ATR (14)": "2", "RSI (14)": "45", "SMA20": "2%",
+        "52W Low": "20%", "Perf Half Y": "5%", "Perf 3Y": "20%"
+    };
+    const borde = {};
+    for (const codigo of Object.keys(FILTROS)) {
+        borde[codigo] = evaluaFiltro(fichaBorde, codigo);
+        assert.equal(borde[codigo].estado, "ok", codigo);
+    }
+    assert.equal(puntosEmpresa(borde, false), 13.69);
 });
 
 test("calculaPuntosPorTicker: solvente, patrimonio negativo, sin ficha con alerta y pendiente", () => {

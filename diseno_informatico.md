@@ -73,9 +73,9 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
       - patrimonio negativo → `incumple` (peor tramo);
       - N/A → `na`;
       - con `tramos` → `puntosTramo` (primer tramo cuya comparación `op`/`limite` se cumple);
-      - si no → `cumple` / `incumple`.
+      - si no (P/S, Rel Volume y ATR, los únicos sin tramos) → `cumple` / `incumple`.
 
-      Al total se suma `PUNTOS_ALERTA_DILUCION` (−99) si `hayAlertaDilucion`. Todo en `logica.js`, sin DOM. Para cambiar un peso o un tramo basta con editar `PESOS_FILTROS`; los tests comprueban que cada filtro soportado tiene pesos y que los tramos siguen alineados con la condición del screener.
+      Al total se suma `PUNTOS_ALERTA_DILUCION` (−99) si `hayAlertaDilucion`, y `puntosEmpresa` lo redondea a 2 decimales: sumar pesos como 0,35 deja restos de coma flotante que se verían en la casilla y en `data-puntos`. Todo en `logica.js`, sin DOM. Es una sola función genérica porque todos los criterios siguen la misma lógica: para cambiar un peso o un tramo basta con editar `PESOS_FILTROS`. Los tests comprueban que cada filtro soportado tiene pesos, que los tramos siguen alineados con la condición del screener, que "mucho" vale casi el doble que "poco" fuera de la solvencia y que el máximo es 26,31.
    3. `ordenaTickers(tickers, puntos, criterioOrden)` decide el orden de las columnas: `ORDEN_ENTRADA` (el del textbox) u `ORDEN_PUNTOS` (de más a menos puntos; a igualdad, orden de entrada). Devuelve una lista nueva: el orden de entrada nunca se modifica.
    4. Pinta, con ese orden de columnas:
       - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.

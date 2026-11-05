@@ -192,40 +192,44 @@ Una suma de señales binarias con el mismo peso, como el *F-score* de Piotroski 
 - Ohlson [14] (*O-score*): lo confirma con un modelo probabilístico.
 - Campbell, Hilscher y Szilagyi [15]: el apalancamiento, la rentabilidad reciente y las caídas sostenidas de la cotización son los predictores más fuertes del riesgo de impago.
 
-La valoración y los técnicos dicen poco sobre la capacidad de pago, así que quedan como desempate. El reparto resultante sobre el máximo posible (22,75 puntos) es:
+La valoración y los técnicos dicen poco sobre la capacidad de pago, así que quedan como desempate. El reparto resultante sobre el máximo posible (26,31 puntos) es:
 
-- **Solvencia pura** (LT Debt/Eq, Debt/Eq, Current Ratio): 10 puntos, ≈44 %.
-- **Capacidad de pago** (margen operativo, BPA, margen bruto): 5 puntos más, así que el bloque fundamental de pago suma ≈66 %.
+- **Solvencia pura** (LT Debt/Eq, Debt/Eq, Current Ratio): 10 puntos, ≈38 %.
+- **Capacidad de pago** (margen operativo, BPA, margen bruto): 6,5 puntos más, así que el bloque fundamental de pago suma ≈63 %.
 - **Resto**: valoración, propiedad y técnicos.
+
+LT Debt/Eq sigue siendo el criterio individual que más pesa (+4) y la solvencia, el bloque que más pesa. Criterio a criterio hay una excepción: un margen operativo de "mucho" (+3,25) supera el máximo de Debt/Eq y de Current Ratio (+3). Se acepta porque es coherente con la literatura citada, donde la rentabilidad operativa está entre los mejores predictores [13][15].
 
 Que los pesos sean de criterio experto y no estimados con datos no es un problema grave: los modelos lineales con pesos "impropios" (subjetivos, pero con el signo correcto) predicen casi tan bien como los ajustados y no se sobreajustan a una muestra [8].
 
 ### 7.2. Pesos por criterio
 
-| Filtro | Bloque | Cumple | N/A | Incumple | Motivo |
-|---|---|---|---|---|---|
-| LT Debt/Eq < 1 | Solvencia | por tramos (máx. **+4**) | **−1** | por tramos (mín. **−4**) | Deuda estructural: el mayor riesgo de insolvencia a largo plazo |
-| Debt/Eq < 1 | Solvencia | por tramos (máx. **+3**) | **−1** | por tramos (mín. **−3**) | Apalancamiento total, incluida la deuda a corto que hay que refinanciar |
-| Current Ratio > 1 | Solvencia | por tramos (máx. **+3**) | **−1** | por tramos (mín. **−3**) | Liquidez: pagar lo que vence en 12 meses |
-| Oper. Margin > 5 % | Capacidad de pago | +2,5 | −0,5 | −2,5 | El beneficio operativo es lo que paga los intereses |
-| EPS Y/Y TTM > 0 % | Capacidad de pago | +1,5 | 0 | −1,5 | BPA creciente: mejora la cobertura de la deuda |
-| Gross Margin > 10 % | Capacidad de pago | +1 | 0 | −1 | Colchón ante caídas de ventas |
-| Forward P/E < 20 | Valoración | +1 | **−1** | −0,5 | Finviz pone `-` si hay pérdidas esperadas |
-| P/E < 30 | Valoración | +0,75 | **−1** | −0,5 | Finviz pone `-` si hay pérdidas actuales |
-| EV/Sales < 6 | Valoración | +0,5 | 0 | −0,5 | Poco relevante para la solvencia |
-| P/S > 2 | Valoración | +0,25 | 0 | −0,25 | Irrelevante para la solvencia |
-| Short Float < 10 % | Propiedad | +1 | 0 | −1 | Los bajistas suelen detectar antes el deterioro financiero [16] |
-| Inst Own > 30 % | Propiedad | +0,5 | 0 | −0,5 | Supervisión de inversores profesionales |
-| Shs Float > 1 M | Propiedad | +0,25 | 0 | −0,25 | Liquidez bursátil, no financiera |
-| Rel Volume > 0,5 | Propiedad | +0,25 | 0 | 0 | Ruido diario |
-| Market Cap < 200 B | Descriptivo | +1 | 0 | **−1** | Criterio del usuario: se descartan las mega-caps, coherente con el efecto tamaño (a igual riesgo, las empresas grandes rinden menos [18]); no mide solvencia |
-| Perf 3Y > 0 % | Técnico | +0,5 | 0 | **0** | Criterio del usuario: suma si sube, pero una caída a 3 años no resta, aunque las caídas sostenidas anticipan deterioro [15] |
-| Perf Half Y > 0 % | Técnico | +0,5 | 0 | −0,5 | Ídem a 6 meses |
-| 52W Low > 5 % | Técnico | +0,5 | 0 | −0,5 | En mínimos anuales el mercado puede estar descontando problemas |
-| RSI (14) > 40 | Técnico | +0,25 | 0 | −0,25 | Momento de corto plazo |
-| SMA20 > 0 % | Técnico | +0,25 | 0 | −0,25 | Momento de corto plazo |
-| ATR (14) > 1 | Técnico | +0,25 | 0 | 0 | Volatilidad: no mide solvencia |
-| Dilución SEC < 20 % | Veto | 0 | 0 | **−99** | Ver §7.5 |
+Cada criterio distingue cuánto cumple o incumple: "mucho" suma o resta casi el doble que "poco" (el porqué y la calibración, en §7.7).
+
+| Filtro | Bloque | Cumple mucho | Cumple poco | N/A | Incumple poco | Incumple mucho | Motivo |
+|---|---|---|---|---|---|---|---|
+| LT Debt/Eq < 1 | Solvencia | <0,3: **+4** | <0,6: +3; <1: +1,5 | **−1** | ≤2: −2 | >2: **−4** | Deuda estructural: el mayor riesgo de insolvencia a largo plazo |
+| Debt/Eq < 1 | Solvencia | <0,5: **+3** | <1: +1,5 | **−1** | ≤2: −1,5 | >2: **−3** | Apalancamiento total, incluida la deuda a corto que hay que refinanciar |
+| Current Ratio > 1 | Solvencia | ≥2: **+3** | ≥1,5: +2,5; >1: +1,5 | **−1** | ≥0,8: −1,5 | <0,8: **−3** | Liquidez: pagar lo que vence en 12 meses |
+| Oper. Margin > 5 % | Capacidad de pago | ≥20 %: +3,25 | >5 %: +1,75 | −0,5 | ≥0: −1,75 | <0: −3,25 | El beneficio operativo es lo que paga los intereses; por debajo de 0 hay pérdida operativa |
+| EPS Y/Y TTM > 0 % | Capacidad de pago | ≥40 %: +1,95 | >0: +1,05 | 0 | ≥−50 %: −1,05 | <−50 %: −1,95 | BPA creciente: mejora la cobertura de la deuda |
+| Gross Margin > 10 % | Capacidad de pago | ≥45 %: +1,3 | >10 %: +0,7 | 0 | ≥0: −0,7 | <0: −1,3 | Colchón ante caídas de ventas; por debajo de 0 se vende a pérdida |
+| Forward P/E < 20 | Valoración | <12: +1,3 | <20: +0,7 | **−1** | ≤30: −0,35 | >30: −0,65 | Finviz pone `-` si hay pérdidas esperadas |
+| P/E < 30 | Valoración | <15: +0,95 | <30: +0,55 | **−1** | ≤50: −0,35 | >50: −0,65 | Finviz pone `-` si hay pérdidas actuales; 15 es el máximo de Graham para el inversor defensivo [17] |
+| EV/Sales < 6 | Valoración | <2: +0,65 | <6: +0,35 | 0 | ≤10: −0,35 | >10: −0,65 | Poco relevante para la solvencia |
+| P/S > 2 | Valoración | +0,25 (sin grados) | +0,25 | 0 | −0,25 | −0,25 (sin grados) | Irrelevante para la solvencia; un P/S mayor es más caro, no mejor |
+| Short Float < 10 % | Propiedad | <4 %: +1,3 | <10 %: +0,7 | 0 | ≤15 %: −0,7 | >15 %: −1,3 | Los bajistas suelen detectar antes el deterioro financiero [16] |
+| Inst Own > 30 % | Propiedad | ≥85 %: +0,65 | >30 %: +0,35 | 0 | ≥15 %: −0,35 | <15 %: −0,65 | Supervisión de inversores profesionales |
+| Shs Float > 1 M | Propiedad | ≥100 M: +0,32 | >1 M: +0,18 | 0 | ≥0,5 M: −0,18 | <0,5 M: −0,32 | Liquidez bursátil, no financiera |
+| Rel Volume > 0,5 | Propiedad | +0,25 (sin grados) | +0,25 | 0 | 0 | 0 | Ruido diario: un pico de volumen no es mejor |
+| Market Cap < 200 B | Descriptivo | 2–50 B: +1,3 | <2 B o 50–200 B: +0,7 | 0 | ≤500 B: −0,7 | >500 B: **−1,3** | Criterio del usuario: se descartan las mega-caps, coherente con el efecto tamaño (a igual riesgo, las empresas grandes rinden menos [18]); por debajo de 2 B vale menos porque el tamaño pequeño aumenta el riesgo de quiebra [14] |
+| Perf 3Y > 0 % | Técnico | ≥75 %: +0,65 | >0: +0,35 | 0 | **0** | **0** | Criterio del usuario: suma si sube, pero una caída a 3 años no resta, sea poca o mucha, aunque las caídas sostenidas anticipan deterioro [15] |
+| Perf Half Y > 0 % | Técnico | ≥15 %: +0,65 | >0: +0,35 | 0 | ≥−20 %: −0,35 | <−20 %: −0,65 | Las caídas sostenidas anticipan deterioro [15] |
+| 52W Low > 5 % | Técnico | ≥40 %: +0,65 | >5 %: +0,35 | 0 | ≥2 %: −0,35 | <2 %: −0,65 | En mínimos anuales el mercado puede estar descontando problemas |
+| RSI (14) > 40 | Técnico | 55–70: +0,32 | 40–55 o >70: +0,18 | 0 | ≥30: −0,18 | <30: −0,32 | Momento de corto plazo; por encima de 70 vale menos por sobrecompra (convención del análisis técnico, sin respaldo académico específico) |
+| SMA20 > 0 % | Técnico | ≥5 %: +0,32 | >0: +0,18 | 0 | ≥−8 %: −0,18 | <−8 %: −0,32 | Momento de corto plazo |
+| ATR (14) > 1 | Técnico | +0,25 (sin grados) | +0,25 | 0 | 0 | 0 | Volatilidad en dólares: depende del precio de la acción y no mide solvencia |
+| Dilución SEC < 20 % | Veto | 0 | 0 | 0 | **−99** | **−99** | Ver §7.5 |
 
 **Rojo intenso en LT Debt/Eq y Market Cap.** Cuando una empresa incumple cualquiera de los dos (también con fondos propios negativos, §7.4), su casilla sale en rojo intenso en vez del rojo normal, para que salte a la vista. El color no cambia los puntos de la tabla de arriba (`FILTROS_ROJO_INTENSO` en `docs/logica.js`).
 
@@ -237,7 +241,7 @@ Un filtro de un screener propio que la app no soporta (sin entrada en `PESOS_FIL
 
 ### 7.3. Tramos en los ratios de solvencia
 
-Con un umbral binario, un LT Debt/Eq de 0,1 puntuaría igual que uno de 0,95. Por eso los tres ratios de solvencia puntúan **por tramos** según su valor. El tramo superior sigue la regla de Graham para el inversor defensivo: activo corriente de al menos el doble del pasivo corriente (Current Ratio ≥ 2) y deuda a largo plazo moderada frente al capital [17].
+Con un umbral binario, un LT Debt/Eq de 0,1 puntuaría igual que uno de 0,95. Por eso los tres ratios de solvencia puntúan **por tramos** según su valor (el resto de criterios también tiene tramos, con otra regla: §7.7). El tramo superior sigue la regla de Graham para el inversor defensivo: activo corriente de al menos el doble del pasivo corriente (Current Ratio ≥ 2) y deuda a largo plazo moderada frente al capital [17].
 
 | LT Debt/Eq | Puntos | | Debt/Eq | Puntos | | Current Ratio | Puntos |
 |---|---|---|---|---|---|---|---|
@@ -266,13 +270,13 @@ Las emisiones de acciones predicen rendimientos futuros inferiores de forma pers
 - las empresas que amplían capital rinden menos que empresas comparables durante años [9];
 - la variación del número de acciones en circulación predice los rendimientos futuros con signo negativo, con más fuerza que el tamaño o la relación valor contable/precio [10].
 
-En clave de solvencia, además, diluir con fuerza suele delatar una necesidad de financiación. Por eso la alerta no se trata como "un filtro más", sino como una regla no compensatoria (lexicográfica): primero se separa a quien diluye fuerte y solo después se ordena por el resto de criterios [11]. Como la suma máxima es 22,75 puntos, −99 garantiza que ninguna combinación de casillas compense la alerta. La dilución en verde o `(SIN DATOS: ver a mano)` no suma ni resta: no diluir no es un mérito extra, y la falta de dato se señala en rojo para revisarla a mano en vez de castigarla.
+En clave de solvencia, además, diluir con fuerza suele delatar una necesidad de financiación. Por eso la alerta no se trata como "un filtro más", sino como una regla no compensatoria (lexicográfica): primero se separa a quien diluye fuerte y solo después se ordena por el resto de criterios [11]. Como la suma máxima es 26,31 puntos, −99 garantiza que ninguna combinación de casillas compense la alerta. La dilución en verde o `(SIN DATOS: ver a mano)` no suma ni resta: no diluir no es un mérito extra, y la falta de dato se señala en rojo para revisarla a mano en vez de castigarla.
 
 ### 7.6. Orden y limitaciones
 
 - **"Orden por filtros cumplidos"** ordena de más a menos puntos; a igualdad de puntos se respeta el orden de entrada.
 - **"Orden entrada"** respeta el orden del campo "Ticker de empresas". La fila del mismo nombre deja ver ese orden original también cuando las columnas están ordenadas por puntos.
-- **Umbral de compra: 16 puntos.** Con las empresas que llegan desde el email FUTURO de [bolsa](https://github.com/carlostechinnovation/bolsa), el usuario compra solo las que tienen 16 puntos o más e ignora el resto (también las que salen sin ficha, que valen 0). Por eso las casillas por debajo de 16 llevan `(poco)` (`PUNTOS_MINIMOS_COMPRA` en `docs/logica.js`). Es un criterio de uso, no estimado con datos: 16 de un máximo de 22,75 exige, en la práctica, aprobar con holgura los tres ratios de solvencia y la capacidad de pago. Bolsa mide a posteriori la rentabilidad de esas compras (su `diseno_funcional.md`), que es lo que permitirá validar o ajustar el umbral.
+- **Umbral de compra: 16 puntos.** Con las empresas que llegan desde el email FUTURO de [bolsa](https://github.com/carlostechinnovation/bolsa), el usuario compra solo las que tienen 16 puntos o más e ignora el resto (también las que salen sin ficha, que valen 0). Por eso las casillas por debajo de 16 llevan `(poco)` (`PUNTOS_MINIMOS_COMPRA` en `docs/logica.js`). Es un criterio de uso, no estimado con datos: 16 de un máximo de 26,31 exige, en la práctica, aprobar con holgura los tres ratios de solvencia y la capacidad de pago. Bolsa mide a posteriori la rentabilidad de esas compras (su `diseno_funcional.md`), que es lo que permitirá validar o ajustar el umbral.
 
 Limitaciones:
 - **Depende del screener elegido.** La puntuación compara empresas **entre sí** frente a ese screener; no mide calidad absoluta.
@@ -280,12 +284,46 @@ Limitaciones:
 - **Faltan indicadores.** Finviz no ofrece la cobertura de intereses (EBIT / gastos financieros), que sería el mejor indicador de capacidad de pago.
 - **Las columnas se mueven mientras se descarga.** Las casillas pendientes valen 0, así que con el orden por puntos activo las columnas pueden cambiar de sitio a medida que llegan datos.
 
+### 7.7. Por qué "poco" y "mucho", y cómo se conserva el umbral de 16
+
+**La regla.** Fuera de los ratios de solvencia, que ya seguían esta idea con sus tramos (§7.3), cumplir o incumplir "poco" vale unas 0,7 veces el peso de referencia y "mucho", unas 1,3 veces: casi el doble (entre 1,7 y 1,9 veces, según el redondeo).
+
+**Por qué graduar:**
+
+1. **Un corte binario pierde información.** Dividir por la mediana una variable normal reduce su correlación con el resultado cerca de un 20 % [19], y esa práctica está muy criticada en regresión [20].
+2. **Cerca del umbral, el dato dice poco.** Las empresas gestionan sus resultados para quedar justo por encima de cero [21]. Con los grados, cruzar el umbral cambia la nota un 30 % menos (de 2 a 1,4 veces el peso).
+3. **El riesgo no es lineal, pero conviene acotarlo.** La probabilidad de impago no crece de forma lineal con el apalancamiento [22], y los ratios extremos distorsionan los modelos, por lo que se suelen truncar [23]. Los tramos monótonos y acotados son la práctica habitual en *credit scoring* [24].
+
+**Por qué no se gradúan P/S, Rel Volume y ATR.** Cumplirlos "mucho" no es mejor: un P/S mayor es más caro, un pico de volumen es ruido y el ATR va en dólares, así que depende del precio de la acción.
+
+**Cómo se conserva el umbral.** El cambio es una dispersión que preserva la media [25]: con ±30 % y cortes cerca de la mediana, la nota esperada de cada criterio apenas cambia, así que el umbral de 16 sigue significando lo mismo aunque el máximo teórico suba de 22,75 a 26,31. Los cortes se fijaron en la mediana de las empresas que cumplen y de las que incumplen, redondeada a valores con sentido económico (P/E 15, margen 0).
+
+**Comprobación con fichas reales** (5-nov-2026, antes y después del cambio, sin dilución):
+
+| | Antes | Después |
+|---|---|---|
+| Máximo teórico | 22,75 | 26,31 |
+| Mínimo teórico | −22 | −24,91 |
+| Nota media (105 empresas aleatorias) | 7,94 | 7,86 |
+| Máximo observado (105 aleatorias) | 21,5 | 22,02 |
+| Empresas con ≥16 (105 aleatorias) | 19 | 19 (18 coinciden) |
+| Empresas con ≥16 (120, con 15 elegidas a mano) | 31 | 31 (30 coinciden) |
+
+En la selección sale `BANF` (16,75 → 15,88) y entra `BKE` (15,25 → 16,73). El orden casi no cambia (correlación de rangos de Spearman 0,99). El cambio por empresa es de 0,94 puntos de media y 3,01 como máximo. Con *bootstrap* sobre las 105 aleatorias, la coincidencia entre selecciones (índice de Jaccard) tiene un IC 95 % de 0,75–1,00 y la tasa de selección varía ±2,9 puntos porcentuales.
+
+**Pasar el screener ya no garantiza 16 puntos.** Antes, una empresa que cumplía los 21 filtros tenía como mínimo 17,25 puntos; ahora, si los cumple todos por poco, 13,69. En la muestra no ocurre: las 10 empresas con 0 o 1 casillas sin cumplir superan 16 (la más justa, `ACIW`, con 16,03).
+
+Límites de esta comprobación:
+- **Es algo optimista.** Los cortes se ajustaron con la misma muestra, en un solo día.
+- **Cobertura parcial.** La lista disponible era parcial (tickers de `A` a `DHR`, 700 empresas del Russell 3000), y 16 de las 136 fichas pedidas llegaron sin datos legibles por el proxy, sin que se haya investigado la causa.
+- **No demuestra mayor capacidad predictiva.** Solo demuestra que la selección apenas cambia. Eso solo podrá medirse con la rentabilidad a posteriori de bolsa, cuyas puntuaciones anteriores y posteriores a este cambio no son comparables cerca de 16.
+
 ## 8. Limitaciones funcionales generales
 
 - **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
 - **Solo se soportan los 21 filtros documentados en §4.1.** Un screener con otros códigos mostrará esas filas como `N/A`.
 - **Sin caché ni histórico.** Cada comparación vuelve a descargar la ficha; no hay seguimiento de la evolución de una empresa entre comparaciones.
-- **Uso de Finviz.** Respeta los términos de uso de finviz.com: esta herramienta hace una única petición manual por consulta y no automatiza extracciones masivas.
+- **Uso de Finviz.** Cada comparación descarga la ficha de cada empresa con un cupo limitado por el proxy (18 peticiones por minuto), y [bolsa](https://github.com/carlostechinnovation/bolsa) abre además la página de forma automática al preparar su email FUTURO. No se extrae el screener completo. Conviene revisar que este uso siga siendo compatible con los términos de finviz.com.
 
 ## Referencias
 
@@ -324,3 +362,17 @@ Limitaciones:
 [17] B. Graham, *The Intelligent Investor*, 4.ª ed. revisada, Harper & Row, 1973, cap. 14 ("Stock Selection for the Defensive Investor").
 
 [18] R. W. Banz, "The relationship between return and market value of common stocks", *Journal of Financial Economics*, 9(1), 1981, pp. 3-18.
+
+[19] J. Cohen, "The cost of dichotomization", *Applied Psychological Measurement*, 7(3), 1983, pp. 249-253.
+
+[20] P. Royston, D. G. Altman y W. Sauerbrei, "Dichotomizing continuous predictors in multiple regression: a bad idea", *Statistics in Medicine*, 25(1), 2006, pp. 127-141.
+
+[21] D. Burgstahler e I. Dichev, "Earnings management to avoid earnings decreases and losses", *Journal of Accounting and Economics*, 24(1), 1997, pp. 99-126.
+
+[22] R. C. Merton, "On the pricing of corporate debt: the risk structure of interest rates", *The Journal of Finance*, 29(2), 1974, pp. 449-470.
+
+[23] T. Shumway, "Forecasting bankruptcy more accurately: a simple hazard model", *The Journal of Business*, 74(1), 2001, pp. 101-124.
+
+[24] L. C. Thomas, D. B. Edelman y J. N. Crook, *Credit Scoring and Its Applications*, SIAM, 2002.
+
+[25] M. Rothschild y J. E. Stiglitz, "Increasing risk: I. A definition", *Journal of Economic Theory*, 2(3), 1970, pp. 225-243.

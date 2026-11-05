@@ -505,9 +505,8 @@ function minutosEstimados(nPeticiones) {
 /* -------------------------------------------------------------------------
    6) EVALUACION DE CASILLAS, PUNTUACION Y ORDEN DE COLUMNAS
    La puntuacion prima la SOLVENCIA (ver diseno_funcional.md SS7): cada filtro
-   da unos puntos si cumple, otros si falta el dato (N/A) y otros si incumple;
-   Debt/Eq, LT Debt/Eq y Current Ratio puntuan ademas por tramos segun su
-   valor. La fila de dilucion solo resta: PUNTOS_ALERTA_DILUCION si hay
+   da unos puntos segun cuanto cumpla o incumpla y otros si falta el dato
+   (N/A). La fila de dilucion solo resta: PUNTOS_ALERTA_DILUCION si hay
    alerta, 0 en otro caso. Una casilla sin ficha (descarga pendiente o
    fallida) vale 0: un fallo del proxy no dice nada de la empresa.
    ------------------------------------------------------------------------- */
@@ -518,6 +517,12 @@ function minutosEstimados(nPeticiones) {
 // una casilla verde y uno negativo una roja. "cumple" e "incumple" valen el
 // mejor y el peor tramo. "patrimonio": con fondos propios negativos Finviz
 // pone "-" en el ratio; se trata como el peor tramo (ver hayPatrimonioNegativo).
+//
+// Fuera de la solvencia, cumplir o incumplir "poco" vale ~0.7 veces el peso de
+// referencia y "mucho" ~1.3 veces (casi el doble), con los cortes cerca de la
+// mediana para que la nota esperada no cambie y el umbral de PUNTOS_MINIMOS_COMPRA
+// siga seleccionando casi las mismas empresas (diseno_funcional.md SS7.7).
+// P/S, Rel Volume y ATR no tienen grados: cumplirlos "mucho" no es mejor.
 const PESOS_FILTROS = {
     // --- Solvencia (por tramos) ---
     "fa_ltdebteq_u1": { cumple: 4, na: -1, incumple: -4, patrimonio: true, tramos: [
@@ -543,31 +548,112 @@ const PESOS_FILTROS = {
     ] },
 
     // --- Capacidad de pago ---
-    "fa_opermargin_o5":   { cumple: 2.5, na: -0.5, incumple: -2.5 },
-    "fa_epsyoyttm_pos":   { cumple: 1.5, na: 0,    incumple: -1.5 },
-    "fa_grossmargin_o10": { cumple: 1,   na: 0,    incumple: -1 },
+    // Margen operativo negativo = perdida operativa: el peor tramo.
+    "fa_opermargin_o5": { cumple: 3.25, na: -0.5, incumple: -3.25, tramos: [
+        { op: ">=", limite: 20, puntos: 3.25 },
+        { op: ">",  limite: 5,  puntos: 1.75 },
+        { op: ">=", limite: 0,  puntos: -1.75 },
+        { op: "<",  limite: 0,  puntos: -3.25 }
+    ] },
+    "fa_epsyoyttm_pos": { cumple: 1.95, na: 0, incumple: -1.95, tramos: [
+        { op: ">=", limite: 40,  puntos: 1.95 },
+        { op: ">",  limite: 0,   puntos: 1.05 },
+        { op: ">=", limite: -50, puntos: -1.05 },
+        { op: "<",  limite: -50, puntos: -1.95 }
+    ] },
+    "fa_grossmargin_o10": { cumple: 1.3, na: 0, incumple: -1.3, tramos: [
+        { op: ">=", limite: 45, puntos: 1.3 },
+        { op: ">",  limite: 10, puntos: 0.7 },
+        { op: ">=", limite: 0,  puntos: -0.7 },
+        { op: "<",  limite: 0,  puntos: -1.3 }
+    ] },
 
     // --- Valoracion: en P/E y Forward P/E Finviz pone "-" si hay perdidas ---
-    "fa_fpe_u20":    { cumple: 1,    na: -1, incumple: -0.5 },
-    "fa_pe_u30":     { cumple: 0.75, na: -1, incumple: -0.5 },
-    "fa_evsales_u6": { cumple: 0.5,  na: 0,  incumple: -0.5 },
-    "fa_ps_o2":      { cumple: 0.25, na: 0,  incumple: -0.25 },
+    "fa_fpe_u20": { cumple: 1.3, na: -1, incumple: -0.65, tramos: [
+        { op: "<",  limite: 12, puntos: 1.3 },
+        { op: "<",  limite: 20, puntos: 0.7 },
+        { op: "<=", limite: 30, puntos: -0.35 },
+        { op: ">",  limite: 30, puntos: -0.65 }
+    ] },
+    // Graham pedia un P/E de 15 como maximo para el inversor defensivo.
+    "fa_pe_u30": { cumple: 0.95, na: -1, incumple: -0.65, tramos: [
+        { op: "<",  limite: 15, puntos: 0.95 },
+        { op: "<",  limite: 30, puntos: 0.55 },
+        { op: "<=", limite: 50, puntos: -0.35 },
+        { op: ">",  limite: 50, puntos: -0.65 }
+    ] },
+    "fa_evsales_u6": { cumple: 0.65, na: 0, incumple: -0.65, tramos: [
+        { op: "<",  limite: 2,  puntos: 0.65 },
+        { op: "<",  limite: 6,  puntos: 0.35 },
+        { op: "<=", limite: 10, puntos: -0.35 },
+        { op: ">",  limite: 10, puntos: -0.65 }
+    ] },
+    "fa_ps_o2": { cumple: 0.25, na: 0, incumple: -0.25 },
 
     // --- Propiedad / liquidez bursatil ---
-    "sh_short_u10":   { cumple: 1,    na: 0, incumple: -1 },
-    "sh_instown_o30": { cumple: 0.5,  na: 0, incumple: -0.5 },
-    "sh_float_o1":    { cumple: 0.25, na: 0, incumple: -0.25 },
+    "sh_short_u10": { cumple: 1.3, na: 0, incumple: -1.3, tramos: [
+        { op: "<",  limite: 4,  puntos: 1.3 },
+        { op: "<",  limite: 10, puntos: 0.7 },
+        { op: "<=", limite: 15, puntos: -0.7 },
+        { op: ">",  limite: 15, puntos: -1.3 }
+    ] },
+    "sh_instown_o30": { cumple: 0.65, na: 0, incumple: -0.65, tramos: [
+        { op: ">=", limite: 85, puntos: 0.65 },
+        { op: ">",  limite: 30, puntos: 0.35 },
+        { op: ">=", limite: 15, puntos: -0.35 },
+        { op: "<",  limite: 15, puntos: -0.65 }
+    ] },
+    "sh_float_o1": { cumple: 0.32, na: 0, incumple: -0.32, tramos: [
+        { op: ">=", limite: 100e6, puntos: 0.32 },
+        { op: ">",  limite: 1e6,   puntos: 0.18 },
+        { op: ">=", limite: 0.5e6, puntos: -0.18 },
+        { op: "<",  limite: 0.5e6, puntos: -0.32 }
+    ] },
     "sh_relvol_o0.5": { cumple: 0.25, na: 0, incumple: 0 },
 
-    // --- Descriptivo: ser mega-cap resta (criterio del usuario) ---
-    "cap_largeunder": { cumple: 1, na: 0, incumple: -1 },
+    // --- Descriptivo: ser mega-cap resta (criterio del usuario). Por debajo de
+    // 2B vale menos: el tamano pequeno aumenta el riesgo de quiebra (Ohlson).
+    "cap_largeunder": { cumple: 1.3, na: 0, incumple: -1.3, tramos: [
+        { op: "<",  limite: 2e9,   puntos: 0.7 },
+        { op: "<",  limite: 50e9,  puntos: 1.3 },
+        { op: "<",  limite: 200e9, puntos: 0.7 },
+        { op: "<=", limite: 500e9, puntos: -0.7 },
+        { op: ">",  limite: 500e9, puntos: -1.3 }
+    ] },
 
     // --- Tecnicos (desempate) ---
-    "ta_perf_3yup":           { cumple: 0.5,  na: 0, incumple: 0 },
-    "ta_perf2_26wup":         { cumple: 0.5,  na: 0, incumple: -0.5 },
-    "ta_highlow52w_a5h":      { cumple: 0.5,  na: 0, incumple: -0.5 },
-    "ta_rsi_nos40":           { cumple: 0.25, na: 0, incumple: -0.25 },
-    "ta_sma20_pa":            { cumple: 0.25, na: 0, incumple: -0.25 },
+    // Una caida a 3 anos no resta, sea poca o mucha (criterio del usuario).
+    "ta_perf_3yup": { cumple: 0.65, na: 0, incumple: 0, tramos: [
+        { op: ">=", limite: 75, puntos: 0.65 },
+        { op: ">",  limite: 0,  puntos: 0.35 },
+        { op: "<=", limite: 0,  puntos: 0 }
+    ] },
+    "ta_perf2_26wup": { cumple: 0.65, na: 0, incumple: -0.65, tramos: [
+        { op: ">=", limite: 15,  puntos: 0.65 },
+        { op: ">",  limite: 0,   puntos: 0.35 },
+        { op: ">=", limite: -20, puntos: -0.35 },
+        { op: "<",  limite: -20, puntos: -0.65 }
+    ] },
+    "ta_highlow52w_a5h": { cumple: 0.65, na: 0, incumple: -0.65, tramos: [
+        { op: ">=", limite: 40, puntos: 0.65 },
+        { op: ">",  limite: 5,  puntos: 0.35 },
+        { op: ">=", limite: 2,  puntos: -0.35 },
+        { op: "<",  limite: 2,  puntos: -0.65 }
+    ] },
+    // Por encima de 70 vale menos: sobrecompra.
+    "ta_rsi_nos40": { cumple: 0.32, na: 0, incumple: -0.32, tramos: [
+        { op: ">",  limite: 70, puntos: 0.18 },
+        { op: ">=", limite: 55, puntos: 0.32 },
+        { op: ">",  limite: 40, puntos: 0.18 },
+        { op: ">=", limite: 30, puntos: -0.18 },
+        { op: "<",  limite: 30, puntos: -0.32 }
+    ] },
+    "ta_sma20_pa": { cumple: 0.32, na: 0, incumple: -0.32, tramos: [
+        { op: ">=", limite: 5,  puntos: 0.32 },
+        { op: ">",  limite: 0,  puntos: 0.18 },
+        { op: ">=", limite: -8, puntos: -0.18 },
+        { op: "<",  limite: -8, puntos: -0.32 }
+    ] },
     "ta_averagetruerange_o1": { cumple: 0.25, na: 0, incumple: 0 }
 };
 const PUNTOS_ALERTA_DILUCION = -99;
@@ -734,14 +820,16 @@ function puntosCasilla(codigo, evaluacion) {
  * Puntos de una empresa: suma de sus casillas mas la alerta de dilucion.
  * @param {Object} evaluacionesTicker codigo -> salida de evaluaFiltro.
  * @param {boolean} alertaDilucion true si su fila de dilucion esta en alerta.
- * @returns {number} Suma de puntos.
+ * @returns {number} Suma de puntos, con 2 decimales.
  */
 function puntosEmpresa(evaluacionesTicker, alertaDilucion) {
     let total = alertaDilucion ? PUNTOS_ALERTA_DILUCION : 0;
     for (const codigo of Object.keys(evaluacionesTicker)) {
         total += puntosCasilla(codigo, evaluacionesTicker[codigo]);
     }
-    return total;
+    // Sumar pesos como 0.35 deja restos de coma flotante que se verian en la
+    // casilla de puntos y en data-puntos (lo lee bolsa).
+    return Math.round(total * 100) / 100;
 }
 
 /**
