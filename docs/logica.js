@@ -657,9 +657,12 @@ const PESOS_FILTROS = {
     "ta_averagetruerange_o1": { cumple: 0.25, na: 0, incumple: 0 }
 };
 const PUNTOS_ALERTA_DILUCION = -99;
-// Filtros cuya casilla incumplida se pinta en rojo intenso (criterio del usuario).
-const FILTROS_ROJO_INTENSO = ["fa_ltdebteq_u1", "cap_largeunder"];
-const CLASE_ROJO_INTENSO = "nok-intenso";
+// Filtros cuya casilla incumplida se marca aparte para que salte a la vista
+// (criterio del usuario), sea cual sea su grado. El color sigue midiendo el grado.
+const FILTROS_CRITICOS = ["fa_ltdebteq_u1", "cap_largeunder"];
+const CLASE_CRITICO = "critico";
+// Escala de color: niveles 1 a 4 en verde y en rojo (diseno_funcional.md SS7.8).
+const NIVEL_MAXIMO = 4;
 // Por debajo de estos puntos la empresa no se compra (criterio del usuario con
 // los emails de bolsa): su casilla de puntos lleva el sufijo "(poco)".
 const PUNTOS_MINIMOS_COMPRA = 16;
@@ -736,15 +739,43 @@ function evaluaFiltro(datos, codigo) {
 }
 
 /**
- * Clase CSS de una casilla de filtro: su estado, salvo que incumpla un filtro
- * de FILTROS_ROJO_INTENSO, que se pinta con CLASE_ROJO_INTENSO.
+ * Nivel de intensidad de una casilla que cumple o incumple, leido de sus tramos
+ * de PESOS_FILTROS para no repetir limites. El nivel maximo es exactamente el
+ * tramo "mucho", el de mas puntos en valor absoluto. Entre el umbral del screener
+ * y ese tramo, el recorrido se reparte a tercios en los niveles 1 a 3.
+ * Siempre nivel 1: filtros sin grados en ese lado (P/S, Rel Volume, ATR y las
+ * caidas de Perf 3Y) y valores que ya han pasado el optimo (RSI sobre 70 o
+ * Market Cap bajo 2B), que cumplen pero puntuan como "poco".
+ * @param {string} codigo Codigo del filtro.
+ * @param {Object} evaluacion Salida de evaluaFiltro con estado "ok" o "nok".
+ * @returns {number} Nivel, de 1 a NIVEL_MAXIMO.
+ */
+function nivelGrado(codigo, evaluacion) {
+    if (evaluacion.patrimonioNegativo) return NIVEL_MAXIMO;
+    const peso = PESOS_FILTROS[codigo];
+    if (!peso || !peso.tramos) return 1;
+    const extremo = evaluacion.estado === "ok" ? peso.cumple : peso.incumple;
+    const tramoMucho = peso.tramos.find(t => t.puntos === extremo);
+    const umbral = FILTROS[codigo].valor;
+    if (!tramoMucho || tramoMucho.limite === umbral) return 1;
+    if (puntosTramo(peso.tramos, evaluacion.valor) === extremo) return NIVEL_MAXIMO;
+    const grado = Math.abs(evaluacion.valor - umbral) / Math.abs(tramoMucho.limite - umbral);
+    if (grado > 1) return 1;
+    return Math.min(NIVEL_MAXIMO - 1, 1 + Math.floor(grado * (NIVEL_MAXIMO - 1)));
+}
+
+/**
+ * Clase CSS de una casilla de filtro: estado y nivel ("ok-3", "nok-1"), o "na".
+ * Si incumple un filtro de FILTROS_CRITICOS lleva ademas CLASE_CRITICO.
  * @param {string} codigo Codigo del filtro.
  * @param {Object} evaluacion Salida de evaluaFiltro.
- * @returns {string} "ok", "nok", "na" o CLASE_ROJO_INTENSO.
+ * @returns {string} Clase o clases CSS de la casilla.
  */
 function claseCasilla(codigo, evaluacion) {
-    if (evaluacion.estado === "nok" && FILTROS_ROJO_INTENSO.includes(codigo)) return CLASE_ROJO_INTENSO;
-    return evaluacion.estado;
+    if (evaluacion.estado === "na") return "na";
+    const clase = evaluacion.estado + "-" + nivelGrado(codigo, evaluacion);
+    if (evaluacion.estado === "nok" && FILTROS_CRITICOS.includes(codigo)) return clase + " " + CLASE_CRITICO;
+    return clase;
 }
 
 /**
@@ -902,7 +933,7 @@ if (typeof module !== "undefined" && module.exports) {
         creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
         minutosEstimados,
         PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ETIQUETA_VALOR_CONTABLE,
-        FILTROS_ROJO_INTENSO, CLASE_ROJO_INTENSO, claseCasilla,
+        FILTROS_CRITICOS, CLASE_CRITICO, NIVEL_MAXIMO, nivelGrado, claseCasilla,
         PUNTOS_MINIMOS_COMPRA, SUFIJO_POCOS_PUNTOS, TEXTO_DILUCION_SIN_DATOS, textoPuntos,
         ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
         ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,

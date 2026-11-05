@@ -18,7 +18,7 @@ const {
     FILTROS, ORDEN, UMBRAL_DILUCION_PCT,
     PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ORDEN_ENTRADA, ORDEN_PUNTOS,
     PUNTOS_MINIMOS_COMPRA, TEXTO_DILUCION_SIN_DATOS, textoPuntos,
-    claseCasilla, CLASE_ROJO_INTENSO
+    claseCasilla, nivelGrado, CLASE_CRITICO, FILTROS_CRITICOS, NIVEL_MAXIMO
 } = require("../docs/logica.js");
 
 const DOCS = path.join(__dirname, "..", "docs");
@@ -285,14 +285,103 @@ test("puntosCasilla: los criterios con grados distinguen poco de mucho, en verde
     assert.equal(perf("-12%"), 0);
 });
 
-test("claseCasilla: rojo intenso solo al incumplir LT Debt/Eq o Market Cap", () => {
-    assert.equal(claseCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "3.14" }, "fa_ltdebteq_u1")), CLASE_ROJO_INTENSO);
-    assert.equal(claseCasilla("fa_ltdebteq_u1",
-        evaluaFiltro({ "Book/sh": "-6.73", "LT Debt/Eq": "-" }, "fa_ltdebteq_u1")), CLASE_ROJO_INTENSO);
-    assert.equal(claseCasilla("cap_largeunder", evaluaFiltro({ "Market Cap": "3.45T" }, "cap_largeunder")), CLASE_ROJO_INTENSO);
-    assert.equal(claseCasilla("fa_ltdebteq_u1", evaluaFiltro({ "LT Debt/Eq": "0.2" }, "fa_ltdebteq_u1")), "ok");
+/** Clase de la casilla de un filtro para un valor de su ficha. */
+function claseDe(codigo, bruto) {
+    return claseCasilla(codigo, evaluaFiltro({ [FILTROS[codigo].finviz]: bruto }, codigo));
+}
+
+test("claseCasilla: el rojo sube a tercios hasta el tramo 'incumple mucho'", () => {
+    const criticos = c => "nok-" + c + " " + CLASE_CRITICO;
+    assert.equal(claseDe("fa_ltdebteq_u1", "1"), criticos(1));
+    assert.equal(claseDe("fa_ltdebteq_u1", "1.2"), criticos(1));
+    assert.equal(claseDe("fa_ltdebteq_u1", "1.5"), criticos(2));
+    assert.equal(claseDe("fa_ltdebteq_u1", "1.8"), criticos(3));
+    assert.equal(claseDe("fa_ltdebteq_u1", "2"), criticos(3), "2 aun es 'poco' (<=2)");
+    assert.equal(claseDe("fa_ltdebteq_u1", "3.14"), criticos(4));
+    assert.equal(claseDe("fa_curratio_o1", "0.95"), "nok-1");
+    assert.equal(claseDe("fa_curratio_o1", "0.8"), "nok-3", "0,8 aun es 'poco' (>=0,8)");
+    assert.equal(claseDe("fa_curratio_o1", "0.5"), "nok-4");
+    assert.equal(claseDe("fa_epsyoyttm_pos", "-10%"), "nok-1");
+    assert.equal(claseDe("fa_epsyoyttm_pos", "-80%"), "nok-4");
+});
+
+test("claseCasilla: el verde sube a tercios hasta el tramo 'cumple mucho'", () => {
+    assert.equal(claseDe("fa_curratio_o1", "1.1"), "ok-1");
+    assert.equal(claseDe("fa_curratio_o1", "1.5"), "ok-2");
+    assert.equal(claseDe("fa_curratio_o1", "1.9"), "ok-3");
+    assert.equal(claseDe("fa_curratio_o1", "2"), "ok-4");
+    assert.equal(claseDe("fa_opermargin_o5", "6%"), "ok-1");
+    assert.equal(claseDe("fa_opermargin_o5", "22%"), "ok-4");
+    assert.equal(claseDe("fa_ltdebteq_u1", "0.2"), "ok-4");
+});
+
+test("claseCasilla: pasado el optimo se cumple con el verde mas claro", () => {
+    assert.equal(claseDe("ta_rsi_nos40", "60"), "ok-4");
+    assert.equal(claseDe("ta_rsi_nos40", "90"), "ok-1");
+    assert.equal(claseDe("cap_largeunder", "40B"), "ok-4");
+    assert.equal(claseDe("cap_largeunder", "1B"), "ok-1");
+});
+
+test("claseCasilla: sin grados va al nivel 1, tambien las caidas de Perf 3Y", () => {
+    for (const [codigo, cumple, incumple] of [
+        ["fa_ps_o2", "3", "1"], ["sh_relvol_o0.5", "2", "0.2"], ["ta_averagetruerange_o1", "5", "0.4"]
+    ]) {
+        assert.equal(claseDe(codigo, cumple), "ok-1", codigo);
+        assert.equal(claseDe(codigo, incumple), "nok-1", codigo);
+    }
+    assert.equal(claseDe("ta_perf_3yup", "-5%"), "nok-1");
+    assert.equal(claseDe("ta_perf_3yup", "-60%"), "nok-1");
+    assert.equal(claseDe("ta_perf_3yup", "80%"), "ok-4");
+});
+
+test("claseCasilla: critico solo al incumplir LT Debt/Eq o Market Cap", () => {
+    assert.deepEqual([...FILTROS_CRITICOS].sort(), ["cap_largeunder", "fa_ltdebteq_u1"]);
+    assert.equal(claseDe("cap_largeunder", "250B"), "nok-1 " + CLASE_CRITICO);
+    assert.equal(claseDe("cap_largeunder", "3.45T"), "nok-4 " + CLASE_CRITICO);
+    assert.equal(claseDe("cap_largeunder", "40B"), "ok-4");
+    assert.equal(claseDe("fa_debteq_u1", "3.77"), "nok-4");
+});
+
+test("claseCasilla: fondos propios negativos al maximo y sin dato en naranja", () => {
+    const datos = { "Book/sh": "-6.73", "LT Debt/Eq": "-", "Debt/Eq": "-" };
+    assert.equal(claseCasilla("fa_ltdebteq_u1", evaluaFiltro(datos, "fa_ltdebteq_u1")), "nok-4 " + CLASE_CRITICO);
+    assert.equal(claseCasilla("fa_debteq_u1", evaluaFiltro(datos, "fa_debteq_u1")), "nok-4");
     assert.equal(claseCasilla("cap_largeunder", evaluaFiltro({}, "cap_largeunder")), "na");
-    assert.equal(claseCasilla("fa_debteq_u1", evaluaFiltro({ "Debt/Eq": "3.77" }, "fa_debteq_u1")), "nok");
+    assert.equal(claseCasilla("fa_pe_u30", evaluaFiltro(undefined, "fa_pe_u30")), "na");
+    assert.equal(claseCasilla("fa_pe_u30", evaluaFiltro(null, "fa_pe_u30")), "na");
+});
+
+test("nivelGrado: el nivel maximo coincide con los puntos extremos en todo filtro con grados", () => {
+    for (const codigo of ORDEN) {
+        const peso = PESOS_FILTROS[codigo];
+        if (!peso.tramos) continue;
+        const def = FILTROS[codigo];
+        for (const tramo of peso.tramos) {
+            // Un valor junto al limite de cada tramo, a uno y otro lado.
+            const margen = Math.abs(tramo.limite) * 0.001 || 0.001;
+            for (const valor of [tramo.limite - margen, tramo.limite, tramo.limite + margen]) {
+                const estado = compara(valor, def.op, def.valor) ? "ok" : "nok";
+                const ev = { texto: String(valor), estado: estado, valor: valor };
+                const extremo = estado === "ok" ? peso.cumple : peso.incumple;
+                const hayGrados = peso.tramos.find(t => t.puntos === extremo).limite !== def.valor;
+                const nivel = nivelGrado(codigo, ev);
+                assert.ok(nivel >= 1 && nivel <= NIVEL_MAXIMO, codigo + " " + valor);
+                if (hayGrados) {
+                    assert.equal(nivel === NIVEL_MAXIMO, puntosCasilla(codigo, ev) === extremo, codigo + " " + valor);
+                }
+            }
+        }
+    }
+});
+
+test("style.css: define todos los niveles y ya no usa las clases antiguas", () => {
+    const css = fs.readFileSync(path.join(DOCS, "style.css"), "utf8");
+    for (let nivel = 1; nivel <= NIVEL_MAXIMO; nivel++) {
+        assert.ok(css.includes(".ok-" + nivel + " {"), "falta ok-" + nivel);
+        assert.ok(css.includes(".nok-" + nivel + " {"), "falta nok-" + nivel);
+    }
+    assert.ok(css.includes("." + CLASE_CRITICO + " {"));
+    assert.equal(/\.nok-intenso|\.ok \{|\.nok \{/.test(css), false);
 });
 
 test("puntosCasilla: los ratios de solvencia puntuan por tramos", () => {
@@ -432,8 +521,14 @@ test("textoPuntos: por debajo de 16 puntos se anade '(poco)'", () => {
 test("app.js: dilucion sin datos en rojo con '(SIN DATOS: ver a mano)'", () => {
     const app = fs.readFileSync(path.join(DOCS, "app.js"), "utf8");
     assert.equal(TEXTO_DILUCION_SIN_DATOS, "(SIN DATOS: ver a mano)");
-    assert.match(app, /if \(!d\) return celda\(TEXTO_DILUCION_SIN_DATOS, "nok"\);/);
+    assert.match(app, /if \(!d\) return celda\(TEXTO_DILUCION_SIN_DATOS, "nok-1"\);/);
     assert.equal(app.includes('celda("N/D"'), false);
+});
+
+test("app.js: la alerta de dilucion usa el rojo maximo y sin alerta el verde mas claro", () => {
+    const app = fs.readFileSync(path.join(DOCS, "app.js"), "utf8");
+    assert.ok(app.includes('"nok-" + NIVEL_MAXIMO + " dilucion-alerta"'));
+    assert.match(app, /return celda\(pctTexto, "ok-1"\);/);
 });
 
 test("app.js: marcas invisibles para lectura automatica (puntos y fin de la comparacion)", () => {

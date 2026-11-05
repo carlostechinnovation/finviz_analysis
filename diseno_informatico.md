@@ -29,13 +29,13 @@ docs/                            <- raiz publicada en GitHub Pages
 ├── index.html                   formulario, botones de orden + tabla de resultados (cabecera dinamica)
 ├── logica.js                    logica pura: filtros, parseo, dilucion, puntuacion y orden (sin DOM ni red)
 ├── app.js                       DOM, descarga (fetch a los proxies) y orquestacion multi-ticker
-├── style.css                    estilos (ok / nok / nok-intenso / na / dilucion-alerta, filas y botones de orden)
+├── style.css                    estilos (ok-1..4 / nok-1..4 / critico / na / dilucion-alerta, filas y botones de orden)
 ├── urls_screeners_finviz.csv    screeners predefinidos   (SCREENER|URL)
 └── descripcion_filtros.csv      glosario de campos Finviz (FILTRO|DESCRIPCION)
 tests/
 ├── logica.test.js               tests de parseo, dilucion y cola del proxy (docs/logica.js)
 └── orden.test.js                tests de evaluacion de casillas, pesos/tramos, patrimonio negativo,
-                                  puntuacion, sufijo "(poco)" y orden de columnas,
+                                  puntuacion, sufijo "(poco)", escala de color y orden de columnas,
                                   mas comprobaciones estaticas de index.html / app.js / style.css
                                   (dilucion sin datos en rojo, marcas data-* de lectura automatica)
 package.json                     solo para poder correr "npm test" (sin dependencias)
@@ -81,8 +81,8 @@ No hay carpetas `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`: no a
       - Cabecera dinámica (`pintaCabecera`): `Filtro | Condición Screener | Descripción` + una columna por ticker.
       - Fila `Orden entrada` (`pintaFilaOrdenEntrada`, clase `.fila-orden`, gris claro): posición 1, 2, 3… de cada ticker en el textbox. Solo si `hayVariasEmpresas` (2 o más).
       - Fila `Orden por filtros cumplidos` (`pintaFilaPuntos` → `celdaPuntos`, clase `.fila-puntos`; "Condición Screener" vacía y "Descripción" = `Puntos`): los puntos de cada ticker, con el sufijo `(poco)` por debajo de `PUNTOS_MINIMOS_COMPRA` = 16 (`logica.js:textoPuntos`) y los atributos `data-*` del paso 0.
-      - Fila de dilución (`pintaFilaDilucion` → `celdaDilucion`, con la columna Descripción vacía): verde (`.ok`) por debajo del umbral, rojo (`.dilucion-alerta`) con `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, rojo (`.nok`) con `(SIN DATOS: ver a mano)` (`TEXTO_DILUCION_SIN_DATOS`) si no hay datos en SEC EDGAR, y naranja (`.na`) con `(pendiente)` mientras no han llegado.
-      - Una fila por filtro (`pintaFilaFiltro`): el valor va **dentro** de la celda de su ticker y el color (verde `.ok` / rojo `.nok` / naranja `.na`) indica `CUMPLE` / `INCUMPLE` / `N/A`. La clase la decide `logica.js:claseCasilla`: un `INCUMPLE` en los filtros de `FILTROS_ROJO_INTENSO` (LT Debt/Eq y Market Cap) usa `.nok-intenso` (rojo intenso) en vez de `.nok`.
+      - Fila de dilución (`pintaFilaDilucion` → `celdaDilucion`, con la columna Descripción vacía): verde (`.ok-1`) por debajo del umbral, rojo oscuro y negrita (`.nok-4` y `.dilucion-alerta`) con `ALERTA POR DILUCIÓN: +XX% en 1 año` si lo supera, rojo claro (`.nok-1`) con `(SIN DATOS: ver a mano)` (`TEXTO_DILUCION_SIN_DATOS`) si no hay datos en SEC EDGAR, y naranja (`.na`) con `(pendiente)` mientras no han llegado.
+      - Una fila por filtro (`pintaFilaFiltro`): el valor va **dentro** de la celda de su ticker y el color (verde `.ok-N` / rojo `.nok-N` / naranja `.na`) indica `CUMPLE` / `INCUMPLE` / `N/A`, y `N` (1 a 4) la intensidad. La clase la decide `logica.js:claseCasilla`, y el nivel, `logica.js:nivelGrado`, que lo lee de los tramos de `PESOS_FILTROS` sin repetir límites (regla en `diseno_funcional.md` §7.8). Un `INCUMPLE` en los filtros de `FILTROS_CRITICOS` (LT Debt/Eq y Market Cap) añade la clase `.critico` (borde oscuro y negrita).
 6. Botones **Orden entrada** / **Orden por filtros cumplidos** (`#botonesOrden`, bajo "Comparar"): `actualizaBotonesOrden()` los muestra solo con 2 o más tickers y marca el activo (`.activo`, `aria-pressed`). Al pulsar uno, `seleccionaOrden(criterio)` cambia `criterioOrden` y llama a `repinta()`: la tabla se recarga reordenando las columnas **sin volver a descargar nada**. El criterio elegido se mantiene durante las descargas en curso y en las siguientes comparaciones de la sesión (por defecto, orden de entrada).
 
 No hay ejecución programada ni tareas en segundo plano: todo ocurre **bajo demanda**, al pulsar "Comparar". No hay, por tanto, planificación temporal que documentar.

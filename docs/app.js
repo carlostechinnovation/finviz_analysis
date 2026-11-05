@@ -489,7 +489,8 @@ async function loadDescriptions() {
    Columnas fijas: Filtro | Condicion Screener | Descripcion, seguidas de una
    columna por cada ticker. El valor de la empresa va DENTRO de su celda
    (no en una columna aparte); el color de la celda (verde/rojo/naranja) es
-   lo que indica CUMPLE / INCUMPLE / N-A, o el aviso de dilucion.
+   lo que indica CUMPLE / INCUMPLE / N-A y su intensidad el grado (claseCasilla),
+   o el aviso de dilucion.
    Filas, de arriba abajo: "Orden entrada" (solo con 2 o mas empresas),
    "Orden por filtros cumplidos" (puntos), dilucion y un filtro por fila.
    ------------------------------------------------------------------------- */
@@ -542,7 +543,7 @@ function urlFinvizSemanal(ticker) {
 /**
  * HTML de una celda de datos.
  * @param {*} texto Contenido (se escapa).
- * @param {string} [clase] Clase CSS (ok / nok / nok-intenso / na / dilucion-alerta).
+ * @param {string} [clase] Clase o clases CSS (ok-N / nok-N / critico / na / dilucion-alerta).
  * @returns {string} HTML del <td>.
  */
 function celda(texto, clase) {
@@ -632,12 +633,12 @@ function pintaFilaPuntos(columnas, puntos, resultadosPorTicker) {
  */
 function celdaDilucion(d) {
     if (d === undefined) return celda("(pendiente)", "na");
-    if (!d) return celda(TEXTO_DILUCION_SIN_DATOS, "nok");
+    if (!d) return celda(TEXTO_DILUCION_SIN_DATOS, "nok-1");
     const pctTexto = (d.pct >= 0 ? "+" : "") + d.pct.toFixed(1) + "%";
     if (hayAlertaDilucion(d)) {
-        return celda("ALERTA POR DILUCI\u00d3N: " + pctTexto + " en 1 a\u00f1o", "dilucion-alerta");
+        return celda("ALERTA POR DILUCI\u00d3N: " + pctTexto + " en 1 a\u00f1o", "nok-" + NIVEL_MAXIMO + " dilucion-alerta");
     }
-    return celda(pctTexto, "ok");
+    return celda(pctTexto, "ok-1");
 }
 
 /**

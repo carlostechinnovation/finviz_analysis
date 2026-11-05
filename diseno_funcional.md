@@ -17,9 +17,9 @@ Finviz te dice **qué** empresas pasan el filtro, pero no **por qué** una concr
 
 | Color | Estado | Significado |
 |---|---|---|
-| 🟢 Verde | `CUMPLE` | El valor de la empresa satisface la condición |
-| 🔴 Rojo | `INCUMPLE` | El valor de la empresa no satisface la condición |
-| 🟥 Rojo intenso | `INCUMPLE` | Igual que el rojo, pero en LT Debt/Eq y Market Cap, para que salten a la vista (ver [§7.2](#72-pesos-por-criterio)) |
+| 🟢 Verde, de claro a oscuro | `CUMPLE` | El valor de la empresa satisface la condición; cuanto más oscuro, con más holgura (ver [§7.8](#78-escala-de-color)) |
+| 🔴 Rojo, de claro a oscuro | `INCUMPLE` | El valor de la empresa no satisface la condición; cuanto más oscuro, más grave (ver [§7.8](#78-escala-de-color)) |
+| Borde oscuro y negrita, sobre el rojo que toque | `INCUMPLE` | Solo en LT Debt/Eq y Market Cap, para que salten a la vista (ver [§7.2](#72-pesos-por-criterio)) |
 | 🟠 Naranja | `N/A` | El dato no está disponible, o el filtro no está soportado por la app |
 
 5. Además, antes de las filas de filtros hay una fila de **alerta de dilución** (independiente del screener): si el número de acciones en circulación de una empresa ha crecido mucho en el último año, esa celda sale en rojo con el texto `ALERTA POR DILUCIÓN: +XX% en 1 año`, aunque el resto de filtros estén en `CUMPLE`. Si SEC EDGAR no da datos suficientes, la celda también sale en rojo, con `(SIN DATOS: ver a mano)`: no se puede descartar la dilución y hay que revisarla a mano. Ver [§6](#6-la-alerta-de-dilución-real-sec-edgar).
@@ -231,7 +231,7 @@ Cada criterio distingue cuánto cumple o incumple: "mucho" suma o resta casi el 
 | ATR (14) > 1 | Técnico | +0,25 (sin grados) | +0,25 | 0 | 0 | 0 | Volatilidad en dólares: depende del precio de la acción y no mide solvencia |
 | Dilución SEC < 20 % | Veto | 0 | 0 | 0 | **−99** | **−99** | Ver §7.5 |
 
-**Rojo intenso en LT Debt/Eq y Market Cap.** Cuando una empresa incumple cualquiera de los dos (también con fondos propios negativos, §7.4), su casilla sale en rojo intenso en vez del rojo normal, para que salte a la vista. El color no cambia los puntos de la tabla de arriba (`FILTROS_ROJO_INTENSO` en `docs/logica.js`).
+**LT Debt/Eq y Market Cap destacados.** Cuando una empresa incumple cualquiera de los dos (también con fondos propios negativos, §7.4), su casilla lleva borde oscuro y negrita, para que salte a la vista aunque incumpla por poco. El color de esa casilla sigue midiendo el grado (§7.8), y nada de esto cambia los puntos de la tabla de arriba (`FILTROS_CRITICOS` en `docs/logica.js`).
 
 **N/A negativo en solvencia (prudencia).** Que falte el dato de deuda o liquidez resta un punto. En P/E y Forward P/E el N/A también resta porque Finviz muestra `-` cuando el beneficio es negativo: ese N/A casi siempre es una mala noticia. En el resto de criterios el N/A es neutro.
 
@@ -259,7 +259,7 @@ Con un umbral binario, un LT Debt/Eq de 0,1 puntuaría igual que uno de 0,95. Po
 Cuando los fondos propios son negativos, **Finviz no publica Debt/Eq ni LT Debt/Eq**: muestra `-`, igual que si faltara el dato. Comprobado el 30-sep-2026 con `MCD` (Book/sh −1,45) y `SBUX` (Book/sh −6,73). Dejarlo como N/A (−1) premiaría el caso más arriesgado frente a una empresa con Debt/Eq de 1,5 (−1,5). Unos fondos propios negativos significan que el pasivo supera al activo contable, que es justo lo que miden los modelos de quiebra: por ejemplo, el indicador de pasivo mayor que activo del *O-score* [14].
 
 Por eso, si `Book/sh` es negativo (o el propio ratio llega negativo), las casillas de **Debt/Eq y LT Debt/Eq**:
-- se pintan en **rojo** con el texto `- (patrimonio negativo)`;
+- se pintan en el **rojo más oscuro** con el texto `- (patrimonio negativo)`;
 - valen el **peor tramo** (−3 y −4).
 
 En empresas maduras con recompras masivas (MCD, SBUX), los fondos propios negativos no implican una quiebra inminente, pero sí un apalancamiento que obliga a mirar la columna con atención. Es la misma lógica de "señal de atención" que la alerta de dilución.
@@ -317,6 +317,41 @@ Límites de esta comprobación:
 - **Es algo optimista.** Los cortes se ajustaron con la misma muestra, en un solo día.
 - **Cobertura parcial.** La lista disponible era parcial (tickers de `A` a `DHR`, 700 empresas del Russell 3000), y 16 de las 136 fichas pedidas llegaron sin datos legibles por el proxy, sin que se haya investigado la causa.
 - **No demuestra mayor capacidad predictiva.** Solo demuestra que la selección apenas cambia. Eso solo podrá medirse con la rentabilidad a posteriori de bolsa, cuyas puntuaciones anteriores y posteriores a este cambio no son comparables cerca de 16.
+
+### 7.8. Escala de color
+
+Con un solo verde y un solo rojo, un Current Ratio de 0,95 y otro de 0,2 se veían igual. Ahora cada casilla tiene cuatro niveles de intensidad, tanto si cumple como si incumple, calculados con los mismos tramos de la puntuación (§7.2).
+
+| Nivel | Verde (cumple) | Rojo (incumple) | Cuándo se usa |
+|---|---|---|---|
+| 1 | `#c8f7c5` | `#f7c5c5` | Primer tercio del recorrido desde el umbral hasta el tramo "mucho" |
+| 2 | `#6fe586` | `#ef9488` | Segundo tercio |
+| 3 | `#4b916e` | `#df5646` | Último tercio |
+| 4 | `#045f42` | `#a81818` | Tramo "mucho": el de más puntos, a favor o en contra |
+
+Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valor de 1,2 es nivel 1, 1,5 es nivel 2, 2 es nivel 3 y 3,14 es nivel 4.
+
+**Casos particulares:**
+- **Sin grados, nivel 1.** P/S, Rel Volume y ATR en los dos sentidos, y Perf 3Y al incumplir, porque una caída a 3 años no resta.
+- **Pasado el óptimo, verde del nivel 1.** Un RSI sobre 70 o un Market Cap bajo 2 B cumplen, pero puntúan como "poco". Una distancia simple al umbral los pintaría en el verde más oscuro y contradiría los puntos.
+- **Fondos propios negativos, rojo del nivel 4**, como el peor tramo (§7.4).
+- **Dilución.** La alerta va en rojo del nivel 4, porque es un veto (§7.5). La falta de datos va en rojo del nivel 1 y la ausencia de alerta en verde del nivel 1, porque no diluir no es un mérito extra.
+- **N/A, en naranja**, sin escala.
+
+**Por qué el grado dentro de cada filtro, y no los puntos.** Con los puntos, casi todos los filtros técnicos quedarían pálidos por mucho que incumplieran, y el color repetiría lo que ya dice la fila de puntos. El coste es que un P/E en nivel 4 (−0,65) se ve tan oscuro como un Current Ratio en nivel 4 (−3): el color indica cuánto se aleja la empresa del criterio, no cuánto pesa ese criterio. Por eso LT Debt/Eq y Market Cap se destacan con otro recurso visual (§7.2).
+
+**Por qué cuatro niveles fijos.** Los colores de una tabla con muchas celdas salpicadas se comparan peor que los de un degradado contiguo, y pocas clases de un mismo tono se distinguen con más fiabilidad [26]. Los tercios son una convención de presentación, sin respaldo empírico. La frontera que sí tiene significado es la del nivel 4, que coincide siempre con el tramo "mucho" de la puntuación; lo comprueba un test para todos los filtros con grados.
+
+**Alternativas descartadas:**
+- **Distancia relativa al umbral** (`|valor − umbral| / |umbral|`): divide por cero en los filtros con umbral 0 (SMA20, EPS Y/Y TTM, Perf).
+- **Percentil entre las empresas comparadas:** un mismo valor cambiaría de color según con quién se compare.
+
+**Legibilidad y daltonismo, medidos.** El contraste del texto en los ocho colores va de 5,18:1 a 7,72:1, por encima del mínimo de 4,5:1 de WCAG AA [27]. La separación de colores se ha calculado como ΔE en OKLab ×100, con la simulación de Machado et al. a severidad máxima [28], y aquí se toma 8 como objetivo práctico, sin que sea una norma:
+
+- Dentro de cada escala, los niveles contiguos quedan entre 9,4 y 23,9.
+- Un verde puro no servía: su tono más oscuro quedaba a 1,6 del rojo del nivel 3 con deuteranopia. Por eso los verdes medios y oscuros tienden algo al azul y sus luminosidades no coinciden con las de los rojos.
+- Tres pares verde/rojo siguen bajo el objetivo: V1/N1 (6,5, el mismo par y el mismo valor que antes de la escala), V2/N1 (6,9) y V2/N2 (7,0). La tabla no añade ningún símbolo a la casilla, así que quien tenga deuteranopia o protanopia debería confirmar esos casos comparando el valor con la columna de condición.
+- El borde del filtro destacado contrasta 2,49:1 sobre el rojo del nivel 4, menos que sobre los demás niveles. En ese nivel, lo que más lo distingue es la negrita.
 
 ## 8. Limitaciones funcionales generales
 
@@ -376,3 +411,9 @@ Límites de esta comprobación:
 [24] L. C. Thomas, D. B. Edelman y J. N. Crook, *Credit Scoring and Its Applications*, SIAM, 2002.
 
 [25] M. Rothschild y J. E. Stiglitz, "Increasing risk: I. A definition", *Journal of Economic Theory*, 2(3), 1970, pp. 225-243.
+
+[26] M. Harrower y C. A. Brewer, "ColorBrewer.org: an online tool for selecting colour schemes for maps", *The Cartographic Journal*, 40(1), 2003, pp. 27-37.
+
+[27] W3C, *Web Content Accessibility Guidelines (WCAG) 2.2*, criterio 1.4.3 "Contrast (Minimum)", recomendación del 5 de octubre de 2023.
+
+[28] G. M. Machado, M. M. Oliveira y L. A. F. Fernandes, "A physiologically-based model for simulation of color vision deficiency", *IEEE Transactions on Visualization and Computer Graphics*, 15(6), 2009, pp. 1291-1298.
