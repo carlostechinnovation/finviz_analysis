@@ -482,6 +482,30 @@ function interpretaErrorProxy(cuerpo) {
     };
 }
 
+// Selector CSS de la tabla de fundamentales de la ficha de Finviz. Se pasa a
+// r.jina.ai en la cabecera X-Target-Selector para que devuelva SOLO esa tabla.
+// Sin el, Jina elige por su cuenta el "contenido principal" de la pagina y,
+// en fichas con muchas noticias, se queda con la lista de noticias y omite la
+// tabla (comprobado el 2026-11-19 con EMBC: 0 campos reconocidos sin selector,
+// 21 con el; AAPL, 21 en ambos casos).
+const SELECTOR_FICHA_FINVIZ = ".snapshot-table2";
+
+// Si la pagina no contiene el selector pedido (ticker inexistente, que Finviz
+// manda a su buscador, o un cambio de HTML de Finviz), r.jina.ai responde
+// HTTP 422 con {"name":"AssertionFailureError","message":"No content
+// available for URL ... with target selector ..."} (comprobado el 2026-11-19).
+/**
+ * Detecta la respuesta de r.jina.ai "el selector pedido no existe en la pagina".
+ * @param {number} status Codigo HTTP de la respuesta del proxy.
+ * @param {string} cuerpo Cuerpo de la respuesta de error.
+ * @returns {boolean} true si conviene repetir la peticion sin selector.
+ */
+function esSinContenidoSelector(status, cuerpo) {
+    if (status !== 422) return false;
+    const info = interpretaErrorProxy(cuerpo);
+    return !!info && /no content available/i.test(info.mensaje);
+}
+
 // Finviz redirige un ticker inexistente a su pagina de busqueda: el proxy la
 // devuelve con "Title: Search". Es definitivo, no merece reintento.
 /**
@@ -931,7 +955,7 @@ if (typeof module !== "undefined" && module.exports) {
         PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS, PROXY_MAX_INTENTOS,
         PROXY_PAUSA_429_MS, PRIORIDAD_FINVIZ, PRIORIDAD_SEC,
         creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
-        minutosEstimados,
+        SELECTOR_FICHA_FINVIZ, esSinContenidoSelector, minutosEstimados,
         PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ETIQUETA_VALOR_CONTABLE,
         FILTROS_CRITICOS, CLASE_CRITICO, NIVEL_MAXIMO, nivelGrado, claseCasilla,
         PUNTOS_MINIMOS_COMPRA, SUFIJO_POCOS_PUNTOS, TEXTO_DILUCION_SIN_DATOS, textoPuntos,

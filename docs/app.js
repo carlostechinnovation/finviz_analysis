@@ -108,14 +108,18 @@ function construyeURLProxy(objetivo) {
  * Descarga una URL con limite de tiempo.
  * @param {string} url URL a descargar.
  * @param {number} ms Limite en milisegundos.
+ * @param {Object<string,string>} [cabeceras] Cabeceras HTTP extra (p.ej.
+ *     X-Target-Selector para r.jina.ai).
  * @returns {Promise<{status:number, texto?:string, cuerpoError?:string,
  *     motivo?:string}>} Resultado.
  */
-async function descargaTexto(url, ms) {
+async function descargaTexto(url, ms, cabeceras) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
     try {
-        const resp = await fetch(url, { cache: "no-store", signal: ctrl.signal, redirect: "follow" });
+        const resp = await fetch(url, {
+            cache: "no-store", signal: ctrl.signal, redirect: "follow", headers: cabeceras || {}
+        });
         if (!resp.ok) {
             let cuerpoError = "";
             try { cuerpoError = await resp.text(); } catch (e) { /* sin cuerpo: basta el status */ }
@@ -199,13 +203,18 @@ function motivoErrorHTTP(r) {
 // Con opciones.silencioso no se anotan los fallos definitivos (p.ej. el 404 de
 // una etiqueta XBRL que la empresa no usa: es lo esperable, no un error).
 // opciones.alFallar(motivo) recibe el motivo final cuando se devuelve null.
+// opciones.cabeceras se envian al proxy en cada intento. Si
+// opciones.abandonaSi(r) devuelve true ante una respuesta HTTP de error, se
+// devuelve null al momento, sin anotar nada ni llamar a alFallar: el llamante
+// tiene un plan B (p.ej. repetir la peticion sin X-Target-Selector).
 /**
  * Pide una URL al proxy respetando el cupo y reintentando lo transitorio.
  * @param {string} objetivo URL de destino.
  * @param {string} etiqueta Prefijo para el log.
  * @param {number} prioridad PRIORIDAD_FINVIZ o PRIORIDAD_SEC.
  * @param {Function} [valida] Validador de la respuesta.
- * @param {{silencioso?:boolean, alFallar?:Function}} [opciones] Opciones de log.
+ * @param {{silencioso?:boolean, alFallar?:Function, cabeceras?:Object<string,string>,
+ *     abandonaSi?:Function}} [opciones] Opciones de log y de peticion.
  * @returns {Promise<string|null>} Texto valido, o null.
  */
 async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
@@ -213,7 +222,7 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
     const url = construyeURLProxy(objetivo);
     let motivo = "";
     for (let intento = 1; intento <= PROXY_MAX_INTENTOS; intento++) {
-        const r = await limitadorProxy.encola(() => descargaTexto(url, TIMEOUT_MS), prioridad);
+        const r = await limitadorProxy.encola(() => descargaTexto(url, TIMEOUT_MS, opciones.cabeceras), prioridad);
         let definitivo = false;
         if (r.texto !== undefined) {
             const fallo = valida ? valida(r.texto) : null;
@@ -221,6 +230,7 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
             motivo = fallo.motivo;
             definitivo = !!fallo.definitivo;
         } else {
+            if (opciones.abandonaSi && opciones.abandonaSi(r)) return null;
             motivo = r.motivo || motivoErrorHTTP(r);
             definitivo = !esReintentable(r.status);
             if (r.status === 429) limitadorProxy.pausa(PROXY_PAUSA_429_MS);
@@ -239,6 +249,12 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
     return null;
 }
 
+// Se pide primero SOLO la tabla de fundamentales (X-Target-Selector, ver
+// SELECTOR_FICHA_FINVIZ en logica.js): sin el, r.jina.ai devuelve a veces solo
+// las noticias de la ficha. Si la pagina no tiene esa tabla (Jina responde 422:
+// ticker inexistente o cambio de HTML de Finviz), se repite sin selector, que es
+// lo que permite reconocer la pagina de busqueda de Finviz y seguir funcionando
+// si Finviz renombra la tabla.
 /**
  * Descarga y parsea la ficha de Finviz del ticker.
  * @param {string} ticker Ticker de la empresa.
@@ -248,7 +264,7 @@ async function descargaDatos(ticker) {
     const objetivo = "https://finviz.com/quote.ashx?t=" + encodeURIComponent(ticker) + "&p=d";
     let datos = null, validos = 0;
 
-    const texto = await pideAlProxy(objetivo, ticker, PRIORIDAD_FINVIZ, (cuerpo) => {
+    const valida = (cuerpo) => {
         if (esBusquedaFinviz(cuerpo)) return { motivo: "Finviz no reconoce el ticker", definitivo: true };
         const errorDestino = errorDestinoProxy(cuerpo);
         if (errorDestino) {
@@ -261,7 +277,20 @@ async function descargaDatos(ticker) {
             return { motivo: "solo " + validos + " campos reconocidos (" + cuerpo.length + " bytes)" };
         }
         return null;
-    }, { alFallar: (motivo) => { motivosFalloFinviz[ticker] = motivo; } });
+    };
+    const alFallar = (motivo) => { motivosFalloFinviz[ticker] = motivo; };
+
+    let sinTabla = false;
+    let texto = await pideAlProxy(objetivo, ticker, PRIORIDAD_FINVIZ, valida, {
+        cabeceras: { "X-Target-Selector": SELECTOR_FICHA_FINVIZ },
+        abandonaSi: (r) => (sinTabla = esSinContenidoSelector(r.status, r.cuerpoError)),
+        alFallar: alFallar
+    });
+    if (texto === null && sinTabla) {
+        logMsg("  [" + ticker + "] la ficha no trae la tabla " + SELECTOR_FICHA_FINVIZ +
+               "; se pide la pagina completa.");
+        texto = await pideAlProxy(objetivo, ticker, PRIORIDAD_FINVIZ, valida, { alFallar: alFallar });
+    }
     if (texto === null) return null;
 
     logMsg("  [" + ticker + "] [OK] " + validos + " campos reconocidos");

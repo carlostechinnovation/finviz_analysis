@@ -12,7 +12,7 @@ const {
     extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
     normaliza, limpia, ALIAS,
     creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
-    minutosEstimados,
+    minutosEstimados, SELECTOR_FICHA_FINVIZ, esSinContenidoSelector,
     PROXY_MAX_POR_MINUTO
 } = require("../docs/logica.js");
 
@@ -291,6 +291,34 @@ test("interpretaErrorProxy: error JSON sin bloqueo y cuerpos que no son de Jina"
 test("esBusquedaFinviz: un ticker inexistente cae en la pagina de busqueda", () => {
     assert.equal(esBusquedaFinviz("Title: Search\n\nURL Source: https://finviz.com/quote.ashx?t=ZZZZQX"), true);
     assert.equal(esBusquedaFinviz("Title: XMTR - Xometry Inc Stock Price and Quote\n\nURL Source: x"), false);
+});
+
+test("esSinContenidoSelector: 422 de r.jina.ai cuando la pagina no tiene la tabla (respuesta real del 2026-11-19)", () => {
+    const cuerpo = '{"data":null,"code":422,"name":"AssertionFailureError","status":42206,' +
+        '"message":"No content available for URL https://finviz.com/quote.ashx?t=ZZQXW&p=d with target selector ' +
+        SELECTOR_FICHA_FINVIZ + '","readableMessage":"AssertionFailureError: No content available for URL ' +
+        'https://finviz.com/quote.ashx?t=ZZQXW&p=d with target selector ' + SELECTOR_FICHA_FINVIZ + '"}';
+    assert.equal(esSinContenidoSelector(422, cuerpo), true);
+    // Otro codigo con el mismo cuerpo, u otro error 422, no activan el plan B.
+    assert.equal(esSinContenidoSelector(403, cuerpo), false);
+    assert.equal(esSinContenidoSelector(422, '{"name":"ParamValidationError","message":"Invalid header"}'), false);
+    assert.equal(esSinContenidoSelector(422, "<html>Unprocessable</html>"), false);
+    assert.equal(esSinContenidoSelector(422, undefined), false);
+});
+
+test("extraeDatosMarkdown: respuesta con X-Target-Selector (solo la tabla, formato real de EMBC 2026-11-19)", () => {
+    const texto = "Title: EMBC - Embecta Corp Stock Price and Quote\n\n" +
+        "URL Source: https://finviz.com/quote.ashx?t=EMBC&p=d\n\n" +
+        "Final URL: https://finviz.com/stock?t=EMBC&p=d\n\nMarkdown Content:\n" +
+        "Index**RUT**\nMarket Cap**343.36M**\nP/E**4.08**\nForward P/E**3.44**\nP/S**0.34**\n" +
+        "EV/Sales**1.60**\nCurrent Ratio**1.68**\nDebt/Eq**-**\nLT Debt/Eq**-**\n" +
+        "[Dividend TTM](https://finviz.com/stock?t=EMBC&ta=1&p=d&ty=dv)[**0.32 (5.28%)**](https://finviz.com/stock?t=EMBC&ta=1&p=d&ty=dv)\n" +
+        "Inst Own**88.91%**\nGross Margin**59.63%**\nOper. Margin**26.38%**\n";
+    const datos = extraeDatosMarkdown(texto);
+    assert.equal(datos["Market Cap"], "343.36M");
+    assert.equal(datos["P/E"], "4.08");
+    assert.equal(datos["Dividend TTM"], "0.32 (5.28%)");
+    assert.ok(cuentaConocidos(datos) >= 8);
 });
 
 test("minutosEstimados: redondea hacia arriba al ritmo del cupo", () => {
