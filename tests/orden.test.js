@@ -537,6 +537,8 @@ test("app.js: marcas invisibles para lectura automatica (puntos y fin de la comp
     assert.match(app, /data-puntos="/);
     assert.match(app, /data-sin-ficha="/);
     assert.match(app, /data-dilucion="/);
+    assert.match(app, /data-motivo="/);
+    assert.match(app, /estadoDilucion\(resultadosPorTicker\[t\]\.dilucion\), motivosFalloFinviz\[t\]\)/);
     assert.match(app, /document\.body\.dataset\.comparacion = "en_curso"/);
     assert.match(app, /document\.body\.dataset\.comparacion = "terminada"/);
     assert.match(app, /document\.body\.dataset\.bloqueoProxy = ultimoBloqueo \? "1" : "0"/);

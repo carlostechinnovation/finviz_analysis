@@ -244,7 +244,8 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
             logMsg("  [" + etiqueta + "] intento " + intento + " fallido (" + motivo + "); se reintenta.");
         }
     }
-    logMsg("  [" + etiqueta + "] [FALLO] " + motivo + " (tras " + PROXY_MAX_INTENTOS + " intentos)");
+    motivo += " (tras " + PROXY_MAX_INTENTOS + " intentos)";
+    logMsg("  [" + etiqueta + "] [FALLO] " + motivo);
     if (opciones.alFallar) opciones.alFallar(motivo);
     return null;
 }
@@ -624,17 +625,20 @@ function pintaFilaOrdenEntrada(columnas, tickers) {
  * Celda de puntos de un ticker: el texto de textoPuntos y, para lectura
  * automatica (p. ej. el backtest de bolsa con un navegador sin ventana),
  * atributos data-* que el usuario no ve: data-ticker, data-puntos,
- * data-sin-ficha ("1" si la ficha de Finviz falta o sigue pendiente) y
- * data-dilucion (estadoDilucion).
+ * data-sin-ficha ("1" si la ficha de Finviz falta o sigue pendiente),
+ * data-dilucion (estadoDilucion) y data-motivo (por que no hay ficha, p.ej.
+ * "timeout 30s (tras 4 intentos)"; vacio si la hay o si sigue pendiente).
  * @param {string} ticker Ticker de la columna.
  * @param {number} puntos Puntos del ticker.
  * @param {boolean} sinFicha true si no hay ficha de Finviz.
  * @param {string} dilucion Salida de estadoDilucion.
+ * @param {string} [motivo] Motivo del fallo de la ficha (motivosFalloFinviz).
  * @returns {string} HTML del <td>.
  */
-function celdaPuntos(ticker, puntos, sinFicha, dilucion) {
+function celdaPuntos(ticker, puntos, sinFicha, dilucion, motivo) {
     return '<td data-ticker="' + textoPlano(ticker) + '" data-puntos="' + textoPlano(puntos) +
-        '" data-sin-ficha="' + (sinFicha ? "1" : "0") + '" data-dilucion="' + dilucion + '">' +
+        '" data-sin-ficha="' + (sinFicha ? "1" : "0") + '" data-dilucion="' + dilucion +
+        '" data-motivo="' + textoPlano(sinFicha ? motivo : "") + '">' +
         textoPlano(textoPuntos(puntos)) + "</td>";
 }
 
@@ -648,7 +652,7 @@ function pintaFilaPuntos(columnas, puntos, resultadosPorTicker) {
     anadeFila(
         ["Orden por filtros cumplidos", "", "Puntos"],
         columnas.map(t => celdaPuntos(t, puntos[t], !resultadosPorTicker[t].datos,
-            estadoDilucion(resultadosPorTicker[t].dilucion))),
+            estadoDilucion(resultadosPorTicker[t].dilucion), motivosFalloFinviz[t])),
         "fila-puntos");
 }
 
