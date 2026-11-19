@@ -358,6 +358,7 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 - **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
 - **Solo se soportan los 21 filtros documentados en §4.1.** Un screener con otros códigos mostrará esas filas como `N/A`.
 - **Sin caché ni histórico.** Cada comparación vuelve a descargar la ficha; no hay seguimiento de la evolución de una empresa entre comparaciones.
+- **Sin capas de datos (Medallion).** Los demás proyectos del propietario separan sus datos en Bronce, Plata y Oro [29]. Aquí no aplica: la web no guarda nada, y cada comparación es un cálculo en memoria que se descarta al cerrar la página. La foto histórica de lo que puntuó cada empresa sí se conserva, pero en [bolsa](https://github.com/carlostechinnovation/bolsa): su schema `finviz_analysis` guarda las compras de 16 puntos o más leídas de esta web y su rentabilidad real, expuestas en su capa Oro (`bolsa_oro`).
 - **Uso de Finviz.** Cada comparación descarga la ficha de cada empresa con un cupo limitado por el proxy (18 peticiones por minuto), y [bolsa](https://github.com/carlostechinnovation/bolsa) abre además la página de forma automática al preparar su email FUTURO. No se extrae el screener completo. Conviene revisar que este uso siga siendo compatible con los términos de finviz.com.
 
 ## Referencias
@@ -417,3 +418,5 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 [27] W3C, *Web Content Accessibility Guidelines (WCAG) 2.2*, criterio 1.4.3 "Contrast (Minimum)", recomendación del 5 de octubre de 2023.
 
 [28] G. M. Machado, M. M. Oliveira y L. A. F. Fernandes, "A physiologically-based model for simulation of color vision deficiency", *IEEE Transactions on Visualization and Computer Graphics*, 15(6), 2009, pp. 1291-1298.
+
+[29] M. Armbrust, A. Ghodsi, R. Xin y M. Zaharia, "Lakehouse: A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics", *Conference on Innovative Data Systems Research (CIDR)*, 2021.
