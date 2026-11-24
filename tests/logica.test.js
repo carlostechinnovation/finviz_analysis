@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 
 const {
     aNumero, compara, buscaValor, buscaDescripcion,
-    extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
+    extraeDatosMarkdown, cuentaConocidos, extraeJSON, ultimoDatoPorFecha, calculaDilucion,
     normaliza, limpia, ALIAS,
     creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
     minutosEstimados, SELECTOR_FICHA_FINVIZ, esSinContenidoSelector,
@@ -368,4 +368,37 @@ test("calculaDilucion: una caida de mas del 90% es un error de escala, no un dat
 test("calculaDilucion: 'shares' que no es una lista (la SEC devuelve {} a veces, CTSH) no lanza", () => {
     assert.equal(calculaDilucion({}), null);
     assert.equal(calculaDilucion(undefined), null);
+});
+
+// Serie real de IESC en us-gaap/CommonStockSharesOutstanding (SEC EDGAR,
+// consultada el 2026-11-24), recortada. Split 2x1 en 2026-08: el 10-K de
+// 2026-11-20 reexpresa 2025-09-30 ajustado, y el de 2025-11-21 lo traia sin
+// ajustar. Va en el orden en que la devuelve la SEC (por informe).
+const IESC_SHARES = [
+    { end: "2024-09-30", val: 19971670, form: "10-K", filed: "2025-11-21" },
+    { end: "2025-09-30", val: 19854463, form: "10-K", filed: "2025-11-21" },
+    { end: "2025-12-31", val: 19927493, form: "10-Q", filed: "2026-01-30" },
+    { end: "2026-06-30", val: 19924339, form: "10-Q", filed: "2026-07-31" },
+    { end: "2025-09-30", val: 19854463, form: "10-Q", filed: "2026-07-31" },
+    { end: "2025-09-30", val: 39708926, form: "10-K", filed: "2026-11-20" },
+    { end: "2026-09-30", val: 39830795, form: "10-K", filed: "2026-11-20" }
+];
+
+test("ultimoDatoPorFecha: con varias versiones de una fecha se queda con la del informe mas reciente", () => {
+    const r = ultimoDatoPorFecha(IESC_SHARES);
+    assert.equal(r.length, 5);
+    assert.equal(r.find(p => p.end === "2025-09-30").val, 39708926);
+});
+
+test("ultimoDatoPorFecha: sin campo filed se queda con el primero de cada fecha", () => {
+    const r = ultimoDatoPorFecha([{ end: "2025-01-01", val: 1 }, { end: "2025-01-01", val: 2 }]);
+    assert.deepEqual(r, [{ end: "2025-01-01", val: 1 }]);
+});
+
+test("calculaDilucion: un split (IESC 2x1) no es dilucion: compara cifras ya reexpresadas", () => {
+    const r = calculaDilucion(IESC_SHARES, new Date("2026-11-24"));
+    assert.ok(r);
+    assert.equal(r.anterior.val, 39708926);
+    assert.equal(r.actual.val, 39830795);
+    assert.ok(Math.abs(r.pct - 0.3) < 0.1, "pct = " + r.pct);
 });

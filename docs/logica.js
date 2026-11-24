@@ -311,6 +311,28 @@ function extraeJSON(texto) {
 // fuera del ultimo anio. Tambien descarta ceros y caidas imposibles (errores
 // de escala en el propio XBRL: CPK declaro 23.544 millones de acciones en
 // 2025-08 y 24 millones en 2026-08). Devuelve null si no hay comparacion fiable.
+//
+// Una misma fecha puede venir varias veces, una por cada informe que la
+// declara: tras un split, los informes posteriores la reexpresan ajustada.
+// Se usa siempre el dato del informe mas reciente (campo "filed"), para no
+// comparar una cifra ajustada con otra sin ajustar. Caso real: IESC hizo un
+// split 2x1 en 2026-08; su 10-K de 2025-11-21 declara 19.854.463 acciones a
+// 2025-09-30 y el de 2026-11-20 reexpresa esa fecha en 39.708.926. Mezclando
+// las dos salia una "dilucion" de +100,6% en vez de +0,3%.
+/**
+ * Deja un solo dato por fecha: el del informe presentado mas tarde.
+ * @param {Array<{end:string,val:number,filed?:string}>} puntos Serie XBRL.
+ * @returns {Array<Object>} Un punto por fecha "end" (orden no garantizado).
+ */
+function ultimoDatoPorFecha(puntos) {
+    const porFecha = new Map();
+    for (const p of puntos) {
+        const previo = porFecha.get(p.end);
+        if (!previo || String(p.filed || "") > String(previo.filed || "")) porFecha.set(p.end, p);
+    }
+    return Array.from(porFecha.values());
+}
+
 /**
  * Calcula la variacion de acciones en circulacion en ~1 anio.
  * @param {Array<{end:string,val:number}>} puntos Serie XBRL de la SEC.
@@ -319,8 +341,8 @@ function extraeJSON(texto) {
  */
 function calculaDilucion(puntos, hoy) {
     if (!Array.isArray(puntos)) return null;
-    const validos = puntos
-        .filter(p => p && p.end && typeof p.val === "number" && p.val > 0)
+    const validos = ultimoDatoPorFecha(
+        puntos.filter(p => p && p.end && typeof p.val === "number" && p.val > 0))
         .sort((a, b) => new Date(a.end) - new Date(b.end));
     if (validos.length < 2) return null;
 
@@ -1035,7 +1057,7 @@ if (typeof module !== "undefined" && module.exports) {
         ANTIGUEDAD_MAX_DILUCION_DIAS, CAIDA_MAX_CREIBLE_PCT,
         ETIQUETAS_CONOCIDAS,
         normaliza, limpia, aNumero, compara, buscaValor, buscaDescripcion,
-        extraeDatosMarkdown, cuentaConocidos, extraeJSON, calculaDilucion,
+        extraeDatosMarkdown, cuentaConocidos, extraeJSON, ultimoDatoPorFecha, calculaDilucion,
         PROXY_MAX_POR_MINUTO, PROXY_VENTANA_MS, PROXY_MAX_SIMULTANEAS, PROXY_MAX_INTENTOS,
         PROXY_PAUSA_429_MS, PRIORIDAD_FINVIZ, PRIORIDAD_SEC,
         creaLimitador, esReintentable, errorDestinoProxy, interpretaErrorProxy, esBusquedaFinviz,
