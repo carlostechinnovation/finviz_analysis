@@ -482,13 +482,17 @@ function interpretaErrorProxy(cuerpo) {
     };
 }
 
-// Selector CSS de la tabla de fundamentales de la ficha de Finviz. Se pasa a
-// r.jina.ai en la cabecera X-Target-Selector para que devuelva SOLO esa tabla.
-// Sin el, Jina elige por su cuenta el "contenido principal" de la pagina y,
-// en fichas con muchas noticias, se queda con la lista de noticias y omite la
-// tabla (comprobado el 2026-11-19 con EMBC: 0 campos reconocidos sin selector,
-// 21 con el; AAPL, 21 en ambos casos).
-const SELECTOR_FICHA_FINVIZ = ".snapshot-table2";
+// Selector CSS de la ficha de Finviz. Se pasa a r.jina.ai en la cabecera
+// X-Target-Selector para que devuelva SOLO la tabla de fundamentales
+// (.snapshot-table2) y los enlaces de cabecera de la ficha
+// (.quote-header_category: sector, industria, pais...), de donde sale el
+// sector (extraeSector). Sin selector, Jina elige por su cuenta el "contenido
+// principal" de la pagina y, en fichas con muchas noticias, se queda con la
+// lista de noticias y omite la tabla (comprobado el 2026-11-19 con EMBC: 0
+// campos reconocidos sin selector, 21 con el; AAPL, 21 en ambos casos). La
+// lista con coma devuelve las dos partes en una sola peticion (comprobado el
+// 2026-11-24 con AAPL).
+const SELECTOR_FICHA_FINVIZ = ".quote-header_category, .snapshot-table2";
 
 // Si la pagina no contiene el selector pedido (ticker inexistente, que Finviz
 // manda a su buscador, o un cambio de HTML de Finviz), r.jina.ai responde
@@ -942,6 +946,86 @@ function hayVariasEmpresas(nTickers) {
     return nTickers >= MIN_TICKERS_PARA_ORDENAR;
 }
 
+/* -------------------------------------------------------------------------
+   7) EXCLUSION DE SECTORES
+   Lista estatica de los sectores del screener de Finviz (desplegable
+   "Sector", sin "Any" ni "Custom", que es solo para cuentas Elite), copiada
+   de finviz.com/screener.ashx el 2026-11-24. "codigo" es el valor que usa
+   Finviz en sus URLs (f=sec_<codigo>) y el que admite el parametro
+   ?excluir_sectores= de esta web; "nombre", el texto que muestra Finviz.
+   ------------------------------------------------------------------------- */
+const SECTORES_FINVIZ = [
+    { codigo: "basicmaterials",        nombre: "Basic Materials" },
+    { codigo: "communicationservices", nombre: "Communication Services" },
+    { codigo: "consumercyclical",      nombre: "Consumer Cyclical" },
+    { codigo: "consumerdefensive",     nombre: "Consumer Defensive" },
+    { codigo: "energy",                nombre: "Energy" },
+    { codigo: "financial",             nombre: "Financial" },
+    { codigo: "healthcare",            nombre: "Healthcare" },
+    { codigo: "industrials",           nombre: "Industrials" },
+    { codigo: "realestate",            nombre: "Real Estate" },
+    { codigo: "technology",            nombre: "Technology" },
+    { codigo: "utilities",             nombre: "Utilities" }
+];
+
+/**
+ * Nombre visible de un sector de Finviz.
+ * @param {string} codigo Codigo del sector (p.ej. "realestate").
+ * @returns {string} Nombre (p.ej. "Real Estate"), o el propio codigo si no
+ *     esta en SECTORES_FINVIZ.
+ */
+function nombreSector(codigo) {
+    const s = SECTORES_FINVIZ.find(x => x.codigo === codigo);
+    return s ? s.nombre : codigo;
+}
+
+// En la ficha de Finviz el sector es un enlace al screener filtrado por el,
+// p.ej. [Technology](https://finviz.com/screener/stocks?v=111&f=sec_technology).
+/**
+ * Sector de la empresa a partir de la respuesta de r.jina.ai.
+ * @param {string} texto Ficha de Finviz en markdown.
+ * @returns {string|null} Codigo del sector, o null si no aparece.
+ */
+function extraeSector(texto) {
+    const m = /[?&]f=sec_([a-z]+)/.exec(String(texto));
+    return m ? m[1] : null;
+}
+
+/**
+ * Interpreta el valor del parametro ?excluir_sectores= (codigos de Finviz
+ * separados por comas, sin distinguir mayusculas).
+ * @param {string|null} valor Valor del parametro.
+ * @returns {{codigos:string[], desconocidos:string[]}} Codigos validos sin
+ *     duplicados y los que no son sectores de SECTORES_FINVIZ.
+ */
+function parseaSectoresExcluidos(valor) {
+    const validos = new Set(SECTORES_FINVIZ.map(s => s.codigo));
+    const codigos = [], desconocidos = [];
+    for (const trozo of String(valor || "").split(",")) {
+        const c = trozo.trim().toLowerCase();
+        if (!c || codigos.includes(c) || desconocidos.includes(c)) continue;
+        (validos.has(c) ? codigos : desconocidos).push(c);
+    }
+    return { codigos: codigos, desconocidos: desconocidos };
+}
+
+/**
+ * Separa las empresas que se muestran de las excluidas por su sector. Una
+ * empresa cuyo sector aun no ha llegado o no se conoce se sigue mostrando.
+ * @param {string[]} tickers Empresas en orden de entrada.
+ * @param {Object} resultadosPorTicker ticker -> { sector, ... }.
+ * @param {string[]} excluidos Codigos de sector excluidos.
+ * @returns {{visibles:string[], excluidas:string[]}} Ambas listas en orden de entrada.
+ */
+function separaPorSector(tickers, resultadosPorTicker, excluidos) {
+    const visibles = [], excluidas = [];
+    for (const t of tickers) {
+        const sector = resultadosPorTicker[t] && resultadosPorTicker[t].sector;
+        (sector && excluidos.includes(sector) ? excluidas : visibles).push(t);
+    }
+    return { visibles: visibles, excluidas: excluidas };
+}
+
 // Guard para poder usar require("./logica.js") desde tests/ con Node, sin
 // afectar al navegador (donde "module" no existe y este bloque no se ejecuta).
 if (typeof module !== "undefined" && module.exports) {
@@ -962,6 +1046,7 @@ if (typeof module !== "undefined" && module.exports) {
         ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
         ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
         hayAlertaDilucion, estadoDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,
-        ordenaTickers, hayVariasEmpresas
+        ordenaTickers, hayVariasEmpresas,
+        SECTORES_FINVIZ, nombreSector, extraeSector, parseaSectoresExcluidos, separaPorSector
     };
 }

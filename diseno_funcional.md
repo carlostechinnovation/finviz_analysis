@@ -28,6 +28,7 @@ Finviz te dice **qué** empresas pasan el filtro, pero no **por qué** una concr
    - **Orden por filtros cumplidos** (columna "Descripción": `Puntos`): la puntuación de cada empresa, con pesos que priman la solvencia (ver [§7](#7-puntuación-y-orden-de-las-empresas)). Por debajo de 16 puntos el número lleva el sufijo `(poco)` (p. ej. `7 (poco)`): es el umbral por debajo del cual no se compra la empresa (ver [§7.6](#76-orden-y-limitaciones)).
    - Si la empresa tiene fondos propios negativos, sus casillas de Debt/Eq y LT Debt/Eq salen en rojo con `(patrimonio negativo)` (ver [§7.4](#74-fondos-propios-negativos)).
 7. Con 2 o más empresas aparecen, bajo el botón "Comparar", los botones **Orden entrada** y **Orden por filtros cumplidos**, que recargan la tabla con las columnas en ese orden (sin volver a descargar datos). Por defecto se usa el orden de entrada.
+8. Bajo el screener, el filtro **Excluir sectores** muestra una casilla por cada sector de Finviz (Basic Materials, Communication Services, Consumer Cyclical, Consumer Defensive, Energy, Financial, Healthcare, Industrials, Real Estate, Technology, Utilities), todas sin marcar por defecto. Las empresas de los sectores marcados **desaparecen de la tabla** al momento, sin volver a descargar nada, y el log indica cuáles se han ocultado. Una fila **Sector**, tras la de dilución, muestra el sector de cada empresa visible. También se puede indicar en la URL (ver [§7.9](#79-exclusión-de-sectores)).
 
 Debajo de la tabla, un log con el detalle de cada descarga.
 
@@ -37,6 +38,7 @@ Debajo de la tabla, un log con el detalle de cada descarga.
 - **Incumplimiento**: si coges una empresa al azar que **no** aparece, debe tener al menos un criterio en **rojo** (`INCUMPLE`) en su columna.
 - **Dilución**: comparando `BFRI` debe salir la fila de dilución en rojo (ver [§6.1](#61-caso-real-verificado-bfri)), y comparando una empresa estable (p. ej. `AAPL`) esa celda debe salir en verde con su porcentaje.
 - **Orden**: comparando varias empresas y pulsando **Orden por filtros cumplidos**, las columnas deben quedar de más a menos puntos, cualquier empresa con alerta de dilución al final, y la fila "Orden entrada" debe seguir mostrando la posición original de cada una.
+- **Exclusión de sectores**: abriendo `?tickers=AAPL,XOM&excluir_sectores=energy` solo debe salir la columna de `AAPL` (Technology), y el log debe decir que `XOM` (Energy) se ha ocultado. Desmarcando "Energy", `XOM` debe volver a aparecer sin nuevas descargas.
 
 ## 4. Análisis del screener predefinido: `solventes`
 
@@ -280,7 +282,7 @@ En clave de solvencia, además, diluir con fuerza suele delatar una necesidad de
 
 Limitaciones:
 - **Depende del screener elegido.** La puntuación compara empresas **entre sí** frente a ese screener; no mide calidad absoluta.
-- **Pesos pensados para empresas no financieras.** Utilities, bancos, aseguradoras y REITs se financian estructuralmente con deuda. El retail y la restauración operan con capital circulante negativo, y un Current Ratio de 0,8 es normal para ellos. En esos sectores la puntuación de solvencia sale sistemáticamente baja sin que eso indique más riesgo.
+- **Pesos pensados para empresas no financieras.** Utilities, bancos, aseguradoras y REITs se financian estructuralmente con deuda. El retail y la restauración operan con capital circulante negativo, y un Current Ratio de 0,8 es normal para ellos. En esos sectores la puntuación de solvencia sale sistemáticamente baja sin que eso indique más riesgo. El filtro "Excluir sectores" permite sacarlos de la comparación (§7.9).
 - **Faltan indicadores.** Finviz no ofrece la cobertura de intereses (EBIT / gastos financieros), que sería el mejor indicador de capacidad de pago.
 - **Las columnas se mueven mientras se descarga.** Las casillas pendientes valen 0, así que con el orden por puntos activo las columnas pueden cambiar de sitio a medida que llegan datos.
 
@@ -353,6 +355,22 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 - Tres pares verde/rojo siguen bajo el objetivo: V1/N1 (6,5, el mismo par y el mismo valor que antes de la escala), V2/N1 (6,9) y V2/N2 (7,0). La tabla no añade ningún símbolo a la casilla, así que quien tenga deuteranopia o protanopia debería confirmar esos casos comparando el valor con la columna de condición.
 - El borde del filtro destacado contrasta 2,49:1 sobre el rojo del nivel 4, menos que sobre los demás niveles. En ese nivel, lo que más lo distingue es la negrita.
 
+### 7.9. Exclusión de sectores
+
+**Para qué sirve.** La puntuación está pensada para empresas no financieras (§7.6). En bancos, aseguradoras, REITs y utilities, un apalancamiento alto es parte normal del modelo de negocio, y sus ratios de solvencia salen siempre mal sin que eso indique más riesgo. Por eso la literatura empírica de ratios contables los deja fuera de la muestra en vez de compararlos con el resto: Fama y French excluyen las empresas financieras porque *"el alto apalancamiento que es normal en ellas probablemente no tiene el mismo significado que en las no financieras"* [30], y en otros trabajos excluyen también las utilities, cuyos precios y dividendos están regulados [31]. El Z-score de Altman, la referencia de los ratios de quiebra, se estimó solo con empresas industriales [13]. El filtro permite hacer lo mismo aquí, o descartar cualquier otro sector que el usuario no quiera comprar.
+
+**Por qué ocultar la columna y no restar puntos.** Excluir un sector es una decisión sobre **qué empresas se comparan**, no un juicio sobre su calidad. Restar puntos mezclaría las dos cosas: una empresa excluida seguiría compitiendo en el ranking y, además, la nota dejaría de medir solo el ajuste al screener. Ocultarla equivale a sacarla de la muestra, como en [30] y [31]. Los puntos de las demás empresas no cambian, porque cada empresa se puntúa por separado (§7).
+
+**Qué sectores.** Los 11 del desplegable "Sector" del screener de Finviz, consultados el 2026-11-24 y fijados en el código (`SECTORES_FINVIZ` en `docs/logica.js`): Basic Materials, Communication Services, Consumer Cyclical, Consumer Defensive, Energy, Financial, Healthcare, Industrials, Real Estate, Technology y Utilities. No se incluye "Any", que equivale a no filtrar, ni "Custom", que es una selección múltiple solo para cuentas de pago. El sector de cada empresa es el que muestra su ficha de Finviz, así el filtro usa la misma clasificación que el screener.
+
+**Parámetro de URL.** `?excluir_sectores=energy,financial` marca esas casillas al abrir la página. Usa los códigos de Finviz (los nombres en minúsculas y sin espacios, p. ej. `realestate`), separados por comas y sin distinguir mayúsculas. Un código desconocido se ignora y el log lo avisa, con la lista de códigos válidos. Sin el parámetro no se excluye nada.
+
+**Limitaciones:**
+- **Empresa sin sector conocido, visible.** Si la ficha de Finviz no llega o no trae el sector, la empresa no se oculta: no se puede saber si pertenece a un sector excluido. En la fila Sector sale `(desconocido)`.
+- **La clasificación es la de Finviz.** Puede no coincidir con GICS ni con otras clasificaciones sectoriales, así que una misma empresa puede caer en sectores distintos según la fuente.
+- **Lectura automática.** Las empresas ocultas no tienen celda en la fila de puntos, así que tampoco tienen marcas `data-*`. Si [bolsa](https://github.com/carlostechinnovation/bolsa) usara el parámetro, no recibiría nada de ellas; hoy no lo usa, porque el parámetro es nuevo.
+- **La lista de sectores no se actualiza sola.** Si Finviz añade o renombra un sector, hay que editar `SECTORES_FINVIZ`. Mientras tanto, las empresas de un sector nuevo se ven siempre, porque no hay casilla para excluirlas.
+
 ## 8. Limitaciones funcionales generales
 
 - **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
@@ -420,3 +438,7 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 [28] G. M. Machado, M. M. Oliveira y L. A. F. Fernandes, "A physiologically-based model for simulation of color vision deficiency", *IEEE Transactions on Visualization and Computer Graphics*, 15(6), 2009, pp. 1291-1298.
 
 [29] M. Armbrust, A. Ghodsi, R. Xin y M. Zaharia, "Lakehouse: A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics", *Conference on Innovative Data Systems Research (CIDR)*, 2021.
+
+[30] E. F. Fama y K. R. French, "The Cross-Section of Expected Stock Returns", *The Journal of Finance*, 47(2), 1992, pp. 427-465.
+
+[31] E. F. Fama y K. R. French, "Disappearing dividends: changing firm characteristics or lower propensity to pay?", *Journal of Financial Economics*, 60(1), 2001, pp. 3-43.

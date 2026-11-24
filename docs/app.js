@@ -10,7 +10,10 @@
    Si la URL trae ?tickers=AAA,BBB,CCC se precarga el textbox y se lanza la
    comparacion sola, sin esperar un clic (asi funciona el enlace que manda
    DIIA en su email con la Seleccion del dia). Si ademas trae
-   ?escenario=texto, ese texto se muestra como subtitulo bajo el titulo.
+   ?escenario=texto, ese texto se muestra como subtitulo bajo el titulo. Con
+   ?excluir_sectores=energy,financial (codigos de SECTORES_FINVIZ, en
+   logica.js) se precargan marcadas esas casillas de "Excluir sectores": las
+   empresas de esos sectores no salen en la tabla.
 
    La logica pura (filtros, parseo, calculo de dilucion) vive en logica.js,
    cargado antes que este fichero, para poder testearla con Node sin DOM.
@@ -33,6 +36,7 @@ const ordenEntradaBtn = document.getElementById("ordenEntradaBtn");
 const ordenPuntosBtn = document.getElementById("ordenPuntosBtn");
 const log = document.getElementById("log");
 const escenarioEl = document.getElementById("escenario");
+const sectoresExcluidosEl = document.getElementById("sectoresExcluidos");
 
 const SCREENER_POR_DEFECTO = "solventes";
 const VALOR_CUSTOM = "__custom__";
@@ -54,6 +58,20 @@ const escenarioURL = (parametrosURL.get("escenario") || "").trim();
 if (escenarioURL) {
     escenarioEl.textContent = escenarioURL;
     escenarioEl.hidden = false;
+}
+
+// Filtro "Excluir sectores": una casilla por sector de SECTORES_FINVIZ, todas
+// sin marcar salvo las que lleguen en ?excluir_sectores=energy,financial.
+const excluirSectoresURL = parseaSectoresExcluidos(parametrosURL.get("excluir_sectores"));
+for (const s of SECTORES_FINVIZ) {
+    const etiqueta = document.createElement("label");
+    const casilla = document.createElement("input");
+    casilla.type = "checkbox";
+    casilla.value = s.codigo;
+    casilla.checked = excluirSectoresURL.codigos.includes(s.codigo);
+    etiqueta.appendChild(casilla);
+    etiqueta.appendChild(document.createTextNode(" " + s.nombre));
+    sectoresExcluidosEl.appendChild(etiqueta);
 }
 
 // Copia embebida de docs/urls_screeners_finviz.csv, usada como respaldo si el
@@ -259,7 +277,8 @@ async function pideAlProxy(objetivo, etiqueta, prioridad, valida, opciones) {
 /**
  * Descarga y parsea la ficha de Finviz del ticker.
  * @param {string} ticker Ticker de la empresa.
- * @returns {Promise<{datos:Object, validos:number}|null>} Ficha, o null.
+ * @returns {Promise<{datos:Object, validos:number, sector:(string|null)}|null>}
+ *     Ficha (sector: codigo de Finviz, o null si no aparece), o null.
  */
 async function descargaDatos(ticker) {
     const objetivo = "https://finviz.com/quote.ashx?t=" + encodeURIComponent(ticker) + "&p=d";
@@ -294,8 +313,10 @@ async function descargaDatos(ticker) {
     }
     if (texto === null) return null;
 
-    logMsg("  [" + ticker + "] [OK] " + validos + " campos reconocidos");
-    return { datos: datos, validos: validos };
+    const sector = extraeSector(texto);
+    logMsg("  [" + ticker + "] [OK] " + validos + " campos reconocidos; sector: " +
+           (sector ? nombreSector(sector) : "(desconocido)"));
+    return { datos: datos, validos: validos, sector: sector };
 }
 
 /* -------------------------------------------------------------------------
@@ -701,25 +722,67 @@ function pintaFilaFiltro(codigo, columnas, evaluacionesFiltro, descripciones) {
 }
 
 /**
+ * Celda de sector de un ticker (informativa, sin color).
+ * @param {string|null|undefined} sector Codigo de Finviz (undefined =
+ *     pendiente, null = desconocido).
+ * @returns {string} HTML del <td>.
+ */
+function celdaSector(sector) {
+    if (sector === undefined) return celda("(pendiente)", "na");
+    return celda(sector ? nombreSector(sector) : "(desconocido)");
+}
+
+/**
+ * Fila de sector (la que usa el filtro "Excluir sectores").
+ * @param {string[]} columnas Tickers en el orden de presentacion.
+ * @param {Object} resultadosPorTicker ticker -> { sector, ... }.
+ */
+function pintaFilaSector(columnas, resultadosPorTicker) {
+    anadeFila(
+        ["Sector", "", "Sector de Finviz (ver \"Excluir sectores\")"],
+        columnas.map(t => celdaSector(resultadosPorTicker[t].sector)));
+}
+
+/**
+ * Codigos de los sectores marcados en "Excluir sectores".
+ * @returns {string[]} Codigos de SECTORES_FINVIZ.
+ */
+function leeSectoresExcluidos() {
+    return Array.from(sectoresExcluidosEl.querySelectorAll("input:checked")).map(c => c.value);
+}
+
+/**
+ * Empresas de la comparacion que se muestran y las excluidas por su sector.
+ * @param {Object} comparacion { tickers, resultadosPorTicker, ... }.
+ * @returns {{visibles:string[], excluidas:string[]}} Salida de separaPorSector.
+ */
+function separaComparacion(comparacion) {
+    return separaPorSector(comparacion.tickers, comparacion.resultadosPorTicker, leeSectoresExcluidos());
+}
+
+/**
  * Pinta la tabla completa con lo que haya llegado hasta ahora. Se llama cada
- * vez que termina una descarga y al pulsar un boton de orden. En
- * resultadosPorTicker[t], datos/dilucion valen undefined mientras estan
- * pendientes y null si la descarga fallo.
+ * vez que termina una descarga, al pulsar un boton de orden y al cambiar
+ * "Excluir sectores". En resultadosPorTicker[t], datos/dilucion/sector valen
+ * undefined mientras estan pendientes y null si la descarga fallo. Las
+ * empresas de los sectores excluidos no tienen columna.
  * @param {Object} comparacion { tickers, filtros, resultadosPorTicker, descripciones }.
  */
 function pintaMultiTicker(comparacion) {
     const tickers = comparacion.tickers;
+    const visibles = separaComparacion(comparacion).visibles;
     const resultados = comparacion.resultadosPorTicker;
     const codigos = ordenaFiltros(comparacion.filtros);
-    const evaluaciones = evaluaTabla(tickers, codigos, resultados);
-    const puntos = calculaPuntosPorTicker(tickers, evaluaciones, resultados);
-    const columnas = ordenaTickers(tickers, puntos, criterioOrden);
+    const evaluaciones = evaluaTabla(visibles, codigos, resultados);
+    const puntos = calculaPuntosPorTicker(visibles, evaluaciones, resultados);
+    const columnas = ordenaTickers(visibles, puntos, criterioOrden);
 
     pintaCabecera(columnas);
     resultsTable.innerHTML = "";
-    if (hayVariasEmpresas(tickers.length)) pintaFilaOrdenEntrada(columnas, tickers);
+    if (hayVariasEmpresas(visibles.length)) pintaFilaOrdenEntrada(columnas, tickers);
     pintaFilaPuntos(columnas, puntos, resultados);
     pintaFilaDilucion(columnas, resultados);
+    pintaFilaSector(columnas, resultados);
     for (const codigo of codigos) {
         pintaFilaFiltro(codigo, columnas, evaluaciones[codigo], comparacion.descripciones);
     }
@@ -729,14 +792,16 @@ function pintaMultiTicker(comparacion) {
  * Repinta la ultima comparacion, si la hay.
  */
 function repinta() {
+    actualizaBotonesOrden();
     if (comparacionActual) pintaMultiTicker(comparacionActual);
 }
 
 /**
- * Muestra los botones de orden solo con varias empresas y marca el activo.
+ * Muestra los botones de orden solo con varias empresas visibles (no
+ * excluidas por sector) y marca el activo.
  */
 function actualizaBotonesOrden() {
-    const n = comparacionActual ? comparacionActual.tickers.length : 0;
+    const n = comparacionActual ? separaComparacion(comparacionActual).visibles.length : 0;
     botonesOrden.hidden = !hayVariasEmpresas(n);
     ordenEntradaBtn.classList.toggle("activo", criterioOrden === ORDEN_ENTRADA);
     ordenPuntosBtn.classList.toggle("activo", criterioOrden === ORDEN_PUNTOS);
@@ -750,8 +815,43 @@ function actualizaBotonesOrden() {
  */
 function seleccionaOrden(criterio) {
     criterioOrden = criterio;
-    actualizaBotonesOrden();
     repinta();
+}
+
+/**
+ * Deja en el log que empresas quedan fuera de la tabla por su sector.
+ */
+function anunciaExclusiones() {
+    if (!comparacionActual) return;
+    const excluidos = leeSectoresExcluidos();
+    if (!excluidos.length) {
+        logMsg("Excluir sectores: ninguno marcado; se muestran todas las empresas.");
+        return;
+    }
+    const excluidas = separaComparacion(comparacionActual).excluidas;
+    logMsg("Excluir sectores (" + excluidos.map(nombreSector).join(", ") + "): " +
+           (excluidas.length ? excluidas.length + " empresa(s) ocultas: " + excluidas.join(", ")
+                             : "ninguna empresa oculta") + ".");
+}
+
+/**
+ * Avisa en el log de los valores de ?excluir_sectores= que no son sectores
+ * de SECTORES_FINVIZ (se ignoran). Se repite en cada comparacion porque
+ * runComparison vacia el log.
+ */
+function avisaSectoresDesconocidosURL() {
+    if (!excluirSectoresURL.desconocidos.length) return;
+    logMsg("AVISO: ?excluir_sectores= trae sectores desconocidos, que se ignoran: " +
+           excluirSectoresURL.desconocidos.join(", ") + ". Validos: " +
+           SECTORES_FINVIZ.map(s => s.codigo).join(", ") + ".");
+}
+
+/**
+ * Al marcar o desmarcar un sector se recarga la tabla sin descargar nada.
+ */
+function cambiaSectoresExcluidos() {
+    repinta();
+    anunciaExclusiones();
 }
 
 /**
@@ -812,6 +912,7 @@ function descargaTicker(ticker, resultadosPorTicker) {
     return Promise.all([
         descargaDatos(ticker).then(r => {
             resultadosPorTicker[ticker].datos = r ? r.datos : null;
+            resultadosPorTicker[ticker].sector = r ? r.sector : null;
             repinta();
         }),
         compruebaDilucion(ticker).then(d => {
@@ -867,6 +968,7 @@ async function runComparison() {
     document.body.dataset.comparacion = "en_curso";
     document.body.dataset.bloqueoProxy = "0";
     log.textContent = "";
+    avisaSectoresDesconocidosURL();
     bloqueosAvisados = new Set();
     ultimoBloqueo = null;
     motivosFalloFinviz = {};
@@ -882,18 +984,20 @@ async function runComparison() {
         anunciaComparacion(entrada.tickers, entrada.filtros);
 
         const resultadosPorTicker = {};
-        for (const t of entrada.tickers) resultadosPorTicker[t] = { datos: undefined, dilucion: undefined };
+        for (const t of entrada.tickers) {
+            resultadosPorTicker[t] = { datos: undefined, dilucion: undefined, sector: undefined };
+        }
         comparacionActual = {
             tickers: entrada.tickers,
             filtros: entrada.filtros,
             resultadosPorTicker: resultadosPorTicker,
             descripciones: await loadDescriptions()
         };
-        actualizaBotonesOrden();
         repinta();
 
         await Promise.all(entrada.tickers.map(t => descargaTicker(t, resultadosPorTicker)));
         anunciaFin(entrada.tickers, resultadosPorTicker);
+        if (leeSectoresExcluidos().length) anunciaExclusiones();
     } catch (e) {
         logMsg("Error inesperado: " + e.message);
     } finally {
@@ -906,6 +1010,8 @@ async function runComparison() {
 compareBtn.addEventListener("click", runComparison);
 ordenEntradaBtn.addEventListener("click", () => seleccionaOrden(ORDEN_ENTRADA));
 ordenPuntosBtn.addEventListener("click", () => seleccionaOrden(ORDEN_PUNTOS));
+sectoresExcluidosEl.addEventListener("change", cambiaSectoresExcluidos);
+avisaSectoresDesconocidosURL();
 loadScreeners().then(() => {
     if (tickersURL) runComparison();
 });
