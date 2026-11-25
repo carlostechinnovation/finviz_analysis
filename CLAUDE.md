@@ -1,57 +1,66 @@
 # Normas de este proyecto (finviz_analysis)
 
-Este fichero sobreescribe, **solo para este proyecto**, las "Preferencias
-tecnicas por defecto" de `~/.claude/CLAUDE.md` (Python, Conda, MariaDB,
-uvicorn/FastAPI, React). El resto de normas personales de ese fichero
-(estilo de interaccion, preguntar antes de cambios ambiguos, etc.) se
+Este fichero matiza, **solo para este proyecto**, las "Preferencias tecnicas
+por defecto" de `~/.claude/CLAUDE.md`. El resto de normas personales de ese
+fichero (estilo de interaccion, preguntar antes de cambios ambiguos, etc.) se
 mantienen y siguen aplicando aqui.
 
-## Por que este proyecto no usa el stack por defecto
+## Dos partes con stacks distintos
 
-`finviz_analysis` es intencionadamente una **web 100% estatica** (HTML +
-JavaScript, sin backend, sin base de datos), pensada para publicarse tal
-cual en GitHub Pages sin coste ni mantenimiento de servidor. Anadir Python
-(Conda), FastAPI/uvicorn, MariaDB o React contradiria ese objetivo: no hay
-nada que un backend o una base de datos resuelvan aqui, y GitHub Pages no
-puede ejecutar Python ni FastAPI.
+### 1. La web (`docs/`): JavaScript estatico, sin backend
 
-Por tanto, para este proyecto:
+Es intencionadamente una **web 100% estatica** (HTML + JavaScript), publicada
+tal cual en GitHub Pages sin coste ni servidor. GitHub Pages no puede ejecutar
+Python ni FastAPI, asi que para la web:
 
 - **Lenguaje**: JavaScript puro (sin framework, sin bundler, sin
-  transpilacion). Los ficheros `docs/app.js` y `docs/logica.js` se
-  mantienen en ASCII puro a proposito (ver cabecera de esos ficheros).
-- **Backend**: ninguno. Toda la logica corre en el navegador; el acceso a
-  Finviz y a SEC EDGAR se hace via el proxy publico `r.jina.ai` para
-  esquivar CORS.
-- **Base de datos**: ninguna. No hay estado persistente entre ejecuciones.
-- **Tests**: `node --test` (test runner incorporado en Node, sin
-  dependencias), no pytest. Ver `tests/logica.test.js`,
-  `tests/orden.test.js` y `tests/sectores.test.js`.
+  transpilacion). `docs/app.js` y `docs/logica.js` se mantienen en ASCII puro
+  a proposito (ver cabecera de esos ficheros).
+- **Sin backend ni base de datos**: toda la logica corre en el navegador; el
+  acceso a Finviz y a SEC EDGAR se hace via el proxy publico `r.jina.ai`.
+- **Tests**: `node --test` (`npm test`, `tests/*.test.js`).
+- Las marcas `data-*` de la fila de puntos son una **interfaz publica**: las
+  leen bolsa y el proceso semanal. No cambiarlas sin adaptar a sus lectores.
 
-## Estructura de carpetas de este proyecto
+### 2. El proceso semanal de solvencia (resto del repositorio): Python
 
-Se sigue la convencion general de `~/.claude/CLAUDE.md` en lo que aplica:
+Abre la web publicada con Playwright para todo el Russell 3000, guarda puntos
+y precio en MariaDB y envia un email. Sigue el stack por defecto y el de
+bolsa:
 
-- `docs/` — web estatica publicada en GitHub Pages (uso identico al de la
-  convencion global: aqui vive tanto el HTML/CSS como el JS, porque no hay
-  un backend separado que justifique una carpeta `modulos/`).
-- `tests/` — tests unitarios (`node --test`, equivalente a la preferencia
-  por pytest en proyectos Python).
+- **Python 3.11** con **Conda** (entorno `finvizanalysis`, `entorno.yml`).
+- **MariaDB** (schema `finvizanalysis`, tabla `solvencia`).
+- **Sin FastAPI, uvicorn ni React**: no hay aplicacion web propia; la unica
+  interfaz es la web estatica y el email.
+- **Tests**: pytest (`tests/test_*.py`).
+- **Credenciales**: solo en `C:\bolsa\secretos\secretos.yml` (el mismo de
+  bolsa), nunca en el repositorio, que es **publico**. El test
+  `tests/test_repositorio_publico.py` falla si aparece un correo o una
+  contrasena en un fichero versionado.
 
-No existen `modulos/`, `permanentes/`, `volatiles/`, `web/` ni `sql/`:
-no hay codigo de backend, ni ficheros de datos persistentes o volatiles
-propios del proyecto, ni una aplicacion web con FastAPI+React, ni SQL.
+## Estructura de carpetas
 
-## Documentacion de este proyecto
+- `docs/` — la web publicada en GitHub Pages (HTML, CSS y JS).
+- `modulos/` — codigo del proceso semanal, un paquete por responsabilidad.
+- `tests/` — tests de las dos partes (`*.test.js` y `test_*.py`).
+- `sql/` — creacion del schema y la tabla.
+- `config/` — `configuracion.yml` (versionado, sin secretos).
+- `planificacion/` — envoltorio de Task Scheduler y comando `schtasks`.
+- `permanentes/` — universo `russell3000_bruto.csv` (fuera de git).
+- `volatiles/` — vacia en el repositorio; los datos de ejecucion van a
+  `C:\finvizanalysis`.
+
+No existe `web/`: la unica web es la estatica de `docs/`.
+
+## Documentacion
 
 Se siguen las normas globales de documentacion:
 
 - `README.md` — resumen breve para la portada de GitHub.
-- `diseno_funcional.md` — el porque del proyecto con enfoque de analista
-  bursatil, con referencias bibliograficas para las decisiones complejas
-  (por que esos filtros del screener, por que el proxy de dilucion via EPS
-  es insuficiente, etc.).
-- `diseno_informatico.md` — arquitectura, flujo de ejecucion, estructura de
-  ficheros e instrucciones de instalacion/uso/tests.
+- `diseno_funcional.md` — el porque, con enfoque de analista bursatil y
+  referencias bibliograficas (filtros del screener, dilucion, puntuacion y,
+  en su seccion 9, la evolucion semanal y la correlacion puntos-precio).
+- `diseno_informatico.md` — arquitectura de las dos partes, flujos,
+  base de datos, instalacion, planificacion y tests.
 
 No se crean otros ficheros `.md` explicativos ademas de estos tres.

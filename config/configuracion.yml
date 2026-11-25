@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------
+#  finviz_analysis - Proceso semanal de solvencia (backend)
+#
+#  Este fichero SE VERSIONA y el repositorio es PUBLICO:
+#  aqui NUNCA va una credencial ni un correo personal.
+#  Las credenciales estan en rutas.dir_secretos (fuera del repositorio),
+#  el mismo fichero que usa el proyecto bolsa.
+#
+#  Significado de cada clave: diseno_informatico.md seccion 10.
+# ---------------------------------------------------------------
+
+rutas:
+  # Datos del proceso, fuera del repositorio
+  dir_base: C:\finvizanalysis
+  dir_ejecuciones: C:\finvizanalysis\data\ejecuciones   # un JSON de estado por ejecucion (lotes, tiempos)
+  dir_informes: C:\finvizanalysis\data\informes         # HTML adjunto y cuerpo del email de cada ejecucion
+  dir_logs: C:\finvizanalysis\volatiles\logs
+  # Universo: cartera del ETF iShares IWV (Russell 3000). Ruta relativa = desde la raiz del repositorio.
+  # No se versiona (.gitignore): ver diseno_informatico.md 10.2 para descargarlo.
+  universo_csv: permanentes\russell3000_bruto.csv
+  # Secretos: FUERA del repositorio. Bloques 'mariadb', 'email' y opcional 'finvizanalysis'. Solo lectura.
+  dir_secretos: C:\bolsa\secretos\secretos.yml
+
+bd:
+  database: finvizanalysis   # SIEMPRE este schema; mariadb.database de secretos se ignora
+  tabla: solvencia
+
+web:
+  # Pagina que se abre con ?tickers=<lote>. Para probar una version local: http://localhost:8000/
+  url: "https://carlostechinnovation.github.io/finviz_analysis/"
+
+lectura:
+  lector: playwright          # Chromium sin ventana, instalado dentro del entorno por actualizar_entorno.py
+  tamano_lote: 100            # tickers por apertura de la pagina
+  # Espera maxima por lote de N tickers (minutos), como en bolsa:
+  # min(timeout_max_min, max(timeout_min, factor * (peticiones_max_por_ticker * N + 1) / peticiones_por_minuto))
+  # Con estos valores: 45 min para un lote de 100 (diseno_funcional.md 9.3)
+  timeout_min: 20
+  timeout_factor: 2
+  timeout_max_min: 60
+  proxy_peticiones_por_minuto: 18     # PROXY_MAX_POR_MINUTO de docs/logica.js
+  proxy_peticiones_max_por_ticker: 4  # 1 ficha de Finviz + hasta 3 de SEC EDGAR
+  # Repesca: tras la pasada principal, una ronda por pausa (min) solo con los tickers sin ficha
+  repesca_pausas_min: [2, 4]
+  espera_bloqueo_min: 16      # pausa tras un lote en el que r.jina.ai bloqueo un dominio (~15 min para sus usuarios anonimos)
+
+ventana:
+  # Sabado 00:01 (tarea programada) hasta domingo 23:59: no se empieza ningun lote a partir del limite
+  dia_limite: 7               # dia ISO de la semana (1 = lunes ... 7 = domingo)
+  hora_limite: "23:59"
+  duracion_max_horas: 48      # tope adicional si se lanza a mano otro dia
+  dias_reanudar: 2            # una ejecucion sin terminar de hace <= estos dias se reanuda con su misma fecha
+
+analisis:
+  umbral_puntos: 16           # mismo umbral que la web (PUNTOS_MINIMOS_COMPRA): por debajo, "(poco)"
+  puntos_maximos: 26.31       # maximo teorico (diseno_funcional.md 7.1): verde mas intenso
+  saturacion_diff_pct: 100    # |diff| al que la celda llega al rojo o verde mas intenso
+  tolerancia_dias: 6          # el dato de referencia de un diff puede ser hasta 6 dias anterior a la fecha objetivo
+  top_n: 10
+  correlacion:
+    min_pares: 8              # pares semanales minimos por empresa para calcular su Spearman
+    max_hueco_dias: 10        # dos datos consecutivos mas separados no forman una semana
+    alfa_fdr: 0.05            # Benjamini-Hochberg
+
+email:
+  activar: true
+  titulo: finviz_analysis
+  subtitulo: "Evolución semanal de la solvencia — Russell 3000"

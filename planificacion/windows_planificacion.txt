@@ -1,0 +1,26 @@
+==============================================================
+  finviz_analysis - Planificacion en Windows (Task Scheduler)
+
+  REQUISITO: abrir PowerShell o CMD como ADMINISTRADOR.
+    /ru SYSTEM   -> se ejecuta sin usuario logueado
+    /rl HIGHEST  -> privilegios maximos
+    /f           -> sobreescribe la tarea si ya existe
+==============================================================
+
+--------------------------------------------------------------
+  TAREA: Solvencia semanal (sabado 00:01, hora del servidor)
+
+  El propio proceso no empieza lotes a partir del domingo 23:59
+  (config/configuracion.yml, seccion ventana) y envia el email al
+  terminar. Windows para por defecto las tareas que superan 72 h:
+  queda margen sobre las 48 h de la ventana.
+--------------------------------------------------------------
+schtasks /create /tn "FinvizAnalysis_Solvencia_Semanal" /tr "C:\DATOS\GITHUB\finviz_analysis\planificacion\run_solvencia_auto.bat" /sc weekly /d SAT /st 00:01 /ru SYSTEM /rl HIGHEST /f
+
+--------------------------------------------------------------
+  Consultar / lanzar a mano / deshabilitar / borrar
+--------------------------------------------------------------
+schtasks /query  /tn "FinvizAnalysis_Solvencia_Semanal" /v /fo LIST
+schtasks /run    /tn "FinvizAnalysis_Solvencia_Semanal"
+schtasks /change /tn "FinvizAnalysis_Solvencia_Semanal" /disable
+schtasks /delete /tn "FinvizAnalysis_Solvencia_Semanal" /f

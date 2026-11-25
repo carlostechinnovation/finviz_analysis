@@ -6,8 +6,8 @@ Aplicación web estática (HTML + JavaScript, sin backend) que coge **uno o vari
 
 ## Documentación
 
-- **[diseno_funcional.md](diseno_funcional.md)** — qué problema resuelve, cómo se interpretan los filtros del screener de ejemplo y por qué la dilución de acciones necesita una comprobación aparte (con referencias).
-- **[diseno_informatico.md](diseno_informatico.md)** — arquitectura, flujo de ejecución, estructura de ficheros, cómo correr la app y los tests en local.
+- **[diseno_funcional.md](diseno_funcional.md)** — qué problema resuelve, cómo se interpretan los filtros del screener de ejemplo, por qué la dilución de acciones necesita una comprobación aparte y cómo se mide la evolución semanal de la solvencia (con referencias).
+- **[diseno_informatico.md](diseno_informatico.md)** — arquitectura de la web y del proceso semanal, flujo de ejecución, base de datos, instalación, planificación y tests.
 
 ## Uso rápido
 
@@ -27,10 +27,26 @@ python -m http.server 8000
 # http://localhost:8000
 ```
 
+## Proceso semanal de solvencia (backend)
+
+Aparte de la web, un proceso Python ([diseno_funcional.md §9](diseno_funcional.md#9-evolución-semanal-de-la-solvencia-de-todo-el-russell-3000)) abre cada **sábado a las 00:01** esta misma web con un navegador sin ventana para las ~2.600 empresas del **Russell 3000**, en lotes de 100. Guarda la puntuación y el precio de cada empresa en MariaDB (`finvizanalysis.solvencia`) y envía un email:
+
+- **Cuerpo:** un resumen ejecutivo con las cifras de la ejecución, las estadísticas de las puntuaciones, el top y el bottom 10 de la semana, la correlación entre subida de puntos y de precio, y el espacio en disco.
+- **Adjunto:** un HTML con una fila por empresa, con sus variaciones de 1 semana a 12 meses.
+
+Usa Python 3.11 con Conda, MariaDB y Playwright; las credenciales están en un fichero fuera del repositorio. Instalación y planificación en [diseno_informatico.md §9–§11](diseno_informatico.md#9-entorno-instalación-y-tests-del-proceso-semanal).
+
+```bat
+python actualizar_entorno.py      :: una vez: entorno conda + Chromium
+ejecutar.bat --comprobar          :: lee la web con dos tickers (sin BD ni email)
+ejecutar.bat                      :: ejecucion completa
+```
+
 ## Tests
 
 ```bash
-npm test
+npm test             # web (node --test)
+python -m pytest     # proceso semanal
 ```
 
-Tests unitarios (`node --test`, sin dependencias) de la lógica pura en [docs/logica.js](docs/logica.js) —incluido el caso real de dilución de `BFRI` documentado en [diseno_funcional.md](diseno_funcional.md), la puntuación por filtros cumplidos, el orden de columnas y la exclusión de sectores— y comprobaciones estáticas de la página.
+Tests unitarios (`node --test`, sin dependencias) de la lógica pura en [docs/logica.js](docs/logica.js) —incluido el caso real de dilución de `BFRI` documentado en [diseno_funcional.md](diseno_funcional.md), la puntuación por filtros cumplidos, el orden de columnas y la exclusión de sectores— y comprobaciones estáticas de la página. Los de pytest cubren el proceso semanal sin red ni base de datos (con `FINVIZ_TEST_MARIADB=1` incluyen la integración con MariaDB) y comprueban que ningún fichero versionado lleva correos ni contraseñas.

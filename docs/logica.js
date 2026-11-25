@@ -942,6 +942,22 @@ function textoPuntos(puntos) {
         : String(puntos);
 }
 
+// Etiqueta del precio en la tabla de fundamentales de Finviz (.snapshot-table2).
+const ETIQUETA_PRECIO = "Price";
+
+/**
+ * Precio de la ficha de Finviz para la marca data-precio (lectura automatica
+ * del proceso semanal de solvencia: diseno_informatico.md 6.2). Vacio si no hay
+ * ficha o la ficha no trae un precio numerico.
+ * @param {Object<string,string>|null} datos Pares etiqueta -> valor de la ficha.
+ * @returns {string} El precio como texto numerico (p. ej. "354.2") o "".
+ */
+function textoPrecio(datos) {
+    if (!datos) return "";
+    const n = aNumero(buscaValor(datos, ETIQUETA_PRECIO));
+    return isFinite(n) && n > 0 ? String(n) : "";
+}
+
 /**
  * Orden de las columnas de empresas segun el criterio elegido.
  * ORDEN_ENTRADA respeta el textbox; ORDEN_PUNTOS ordena de mas a menos
@@ -1065,6 +1081,7 @@ if (typeof module !== "undefined" && module.exports) {
         PESOS_FILTROS, PUNTOS_ALERTA_DILUCION, ETIQUETA_VALOR_CONTABLE,
         FILTROS_CRITICOS, CLASE_CRITICO, NIVEL_MAXIMO, nivelGrado, claseCasilla,
         PUNTOS_MINIMOS_COMPRA, SUFIJO_POCOS_PUNTOS, TEXTO_DILUCION_SIN_DATOS, textoPuntos,
+        ETIQUETA_PRECIO, textoPrecio,
         ORDEN_ENTRADA, ORDEN_PUNTOS, MIN_TICKERS_PARA_ORDENAR,
         ordenaFiltros, estadoDeValor, hayPatrimonioNegativo, evaluaFiltro, evaluaTabla,
         hayAlertaDilucion, estadoDilucion, puntosTramo, puntosCasilla, puntosEmpresa, calculaPuntosPorTicker,

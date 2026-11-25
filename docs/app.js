@@ -647,19 +647,22 @@ function pintaFilaOrdenEntrada(columnas, tickers) {
  * automatica (p. ej. el backtest de bolsa con un navegador sin ventana),
  * atributos data-* que el usuario no ve: data-ticker, data-puntos,
  * data-sin-ficha ("1" si la ficha de Finviz falta o sigue pendiente),
- * data-dilucion (estadoDilucion) y data-motivo (por que no hay ficha, p.ej.
- * "timeout 30s (tras 4 intentos)"; vacio si la hay o si sigue pendiente).
+ * data-dilucion (estadoDilucion), data-motivo (por que no hay ficha, p.ej.
+ * "timeout 30s (tras 4 intentos)"; vacio si la hay o si sigue pendiente) y
+ * data-precio (campo "Price" de la ficha, textoPrecio; vacio sin ficha).
  * @param {string} ticker Ticker de la columna.
  * @param {number} puntos Puntos del ticker.
  * @param {boolean} sinFicha true si no hay ficha de Finviz.
  * @param {string} dilucion Salida de estadoDilucion.
  * @param {string} [motivo] Motivo del fallo de la ficha (motivosFalloFinviz).
+ * @param {string} [precio] Salida de textoPrecio.
  * @returns {string} HTML del <td>.
  */
-function celdaPuntos(ticker, puntos, sinFicha, dilucion, motivo) {
+function celdaPuntos(ticker, puntos, sinFicha, dilucion, motivo, precio) {
     return '<td data-ticker="' + textoPlano(ticker) + '" data-puntos="' + textoPlano(puntos) +
         '" data-sin-ficha="' + (sinFicha ? "1" : "0") + '" data-dilucion="' + dilucion +
-        '" data-motivo="' + textoPlano(sinFicha ? motivo : "") + '">' +
+        '" data-motivo="' + textoPlano(sinFicha ? motivo : "") +
+        '" data-precio="' + textoPlano(precio || "") + '">' +
         textoPlano(textoPuntos(puntos)) + "</td>";
 }
 
@@ -673,7 +676,8 @@ function pintaFilaPuntos(columnas, puntos, resultadosPorTicker) {
     anadeFila(
         ["Orden por filtros cumplidos", "", "Puntos"],
         columnas.map(t => celdaPuntos(t, puntos[t], !resultadosPorTicker[t].datos,
-            estadoDilucion(resultadosPorTicker[t].dilucion), motivosFalloFinviz[t])),
+            estadoDilucion(resultadosPorTicker[t].dilucion), motivosFalloFinviz[t],
+            textoPrecio(resultadosPorTicker[t].datos))),
         "fila-puntos");
 }
 

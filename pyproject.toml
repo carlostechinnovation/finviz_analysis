@@ -1,0 +1,4 @@
+# Solo configuracion de pytest para el proceso semanal (modulos/). La web (docs/) usa npm test.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

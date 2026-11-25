@@ -1,0 +1,22 @@
+# Entorno conda del proceso semanal de finviz_analysis (diseno_informatico.md 9).
+# La web de docs/ no lo necesita: es HTML + JavaScript estatico.
+# Solo lo que el codigo importa; al lado, quien lo usa.
+name: finvizanalysis
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  # conda solo resuelve python y pip (resolver mas paquetes agotaba la memoria
+  # del equipo de desarrollo); el resto llega por pip en ruedas binarias
+  - pip:
+    - numpy>=1.26        # modulos/analisis (Benjamini-Hochberg)
+    - scipy>=1.11        # modulos/analisis (Spearman y su p-valor)
+    - pandas>=2.0,<4     # modulos/analisis, modulos/bd
+    - pyyaml>=6.0        # modulos/configuracion
+    - sqlalchemy>=2.0    # modulos/bd
+    - PyMySQL>=1.1.1     # driver de MariaDB de sqlalchemy (URL mysql+pymysql)
+    # Navegador sin ventana para abrir la web: actualizar_entorno.py instala su
+    # Chromium DENTRO del entorno (PLAYWRIGHT_BROWSERS_PATH=0), comun a SYSTEM
+    - playwright>=1.48   # modulos/lector
+    - pytest>=9.0.3      # tests/

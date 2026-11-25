@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# --- Proceso semanal (backend) ---
+# Universo (cartera de iShares IWV): no se redistribuye; ver diseno_informatico.md 10.2
+permanentes/*
+!permanentes/.gitkeep
+volatiles/*
+!volatiles/.gitkeep
+# Ruta local del Python del entorno (la escribe actualizar_entorno.py)
+config/python_exe.txt

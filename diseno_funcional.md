@@ -375,9 +375,131 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 
 - **El significado de los códigos de filtro de Finviz no está documentado públicamente.** Se han verificado empíricamente comparando el número de resultados del screener con y sin cada filtro. Así se detectó y corrigió el mapeo de `ta_highlow52w_a5h`, que significa *"5 % o más **por encima del mínimo** de 52 semanas"* y no *"cerca del máximo"* como se interpretaba antes.
 - **Solo se soportan los 21 filtros documentados en §4.1.** Un screener con otros códigos mostrará esas filas como `N/A`.
-- **Sin caché ni histórico.** Cada comparación vuelve a descargar la ficha; no hay seguimiento de la evolución de una empresa entre comparaciones.
-- **Sin capas de datos (Medallion).** Los demás proyectos del propietario separan sus datos en Bronce, Plata y Oro [29]. Aquí no aplica: la web no guarda nada, y cada comparación es un cálculo en memoria que se descarta al cerrar la página. La foto histórica de lo que puntuó cada empresa sí se conserva, pero en [bolsa](https://github.com/carlostechinnovation/bolsa): su schema `finviz_analysis` guarda las compras de 16 puntos o más leídas de esta web y su rentabilidad real, expuestas en su capa Oro (`bolsa_oro`).
-- **Uso de Finviz.** Cada comparación descarga la ficha de cada empresa con un cupo limitado por el proxy (18 peticiones por minuto), y [bolsa](https://github.com/carlostechinnovation/bolsa) abre además la página de forma automática al preparar su email FUTURO. No se extrae el screener completo. Conviene revisar que este uso siga siendo compatible con los términos de finviz.com.
+- **La web no tiene caché ni histórico.** Cada comparación vuelve a descargar la ficha. El seguimiento semanal de la puntuación de todas las empresas lo hace el proceso de [§9](#9-evolución-semanal-de-la-solvencia-de-todo-el-russell-3000), que sí guarda el histórico.
+- **Sin capas de datos (Medallion).** Los demás proyectos del propietario separan sus datos en Bronce, Plata y Oro [29]. La web no guarda nada: cada comparación es un cálculo en memoria que se descarta al cerrar la página. El proceso semanal (§9) sí persiste, pero en una **sola tabla**, `finvizanalysis.solvencia`, por decisión del propietario. Es un dato ya elaborado (equivalente a Oro), y su Bronce sería la propia página leída, que no se conserva. Lo que bolsa lee de esta web lo sigue guardando bolsa en su schema `finviz_analysis`, expuesto en `bolsa_oro`.
+- **Uso de Finviz.** Cada comparación descarga la ficha de cada empresa con un cupo limitado por el proxy (18 peticiones por minuto). [Bolsa](https://github.com/carlostechinnovation/bolsa) abre además la página de forma automática al preparar su email FUTURO, y el proceso semanal (§9) descarga una vez por semana la ficha de las ~2.600 empresas del Russell 3000, al mismo ritmo. No se extrae el screener. Conviene revisar que este uso siga siendo compatible con los términos de finviz.com.
+
+## 9. Evolución semanal de la solvencia de todo el Russell 3000
+
+La web responde a "¿por qué esta empresa no sale en mi screener?" para unas pocas empresas y en un momento dado. El **proceso semanal** (código Python fuera de `docs/`; detalle técnico en [diseno_informatico.md §6](diseno_informatico.md#6-proceso-semanal-de-solvencia-backend)) responde a otra pregunta: **¿cómo evoluciona la solvencia de todas las empresas, y se mueve el precio cuando lo hace la puntuación?** Para eso abre la propia web, con un navegador sin ventana, para todo el universo, y guarda cada semana la puntuación y el precio de cada empresa.
+
+### 9.1. Universo: el Russell 3000
+
+"Todas las empresas" es el **Russell 3000**, el índice que cubre en torno al 98 % de la capitalización bursátil invertible de EE. UU. [39]. Es el mismo universo que usa [bolsa](https://github.com/carlostechinnovation/bolsa), así que las dos series se pueden cruzar. Se toma de la cartera completa del ETF iShares IWV, que lo replica y la publica a diario (`permanentes/russell3000_bruto.csv`, ~2.600 líneas), y se aplican los mismos filtros que en bolsa:
+
+- se descartan los futuros, el efectivo y las posiciones sin mercado (`NO MARKET`, `Non-Nms`);
+- se descartan los CVR, los *escrow* y los derechos;
+- se quitan los tickers repetidos.
+
+Quedan **2.582 tickers**, según la cartera del 2026-10-15. Hay un caso especial: iShares quita el guion en algunas clases de acciones (`BFB`) y Finviz lo necesita (`BF-B`). La repesca (§9.3) prueba la forma con guion cuando el nombre acaba en `CLASS X`. No se aplica de entrada porque `META` ("CLASS A") también acaba en A y no es una clase partida.
+
+Alternativas descartadas:
+
+- **Todos los valores de NYSE/NASDAQ/AMEX** (~6.000). Doblaría la duración (§9.3) y añadiría microcapitalizaciones con fichas de Finviz incompletas.
+- **El screener completo de Finviz.** Exigiría cientos de peticiones adicionales por semana.
+
+### 9.2. Qué se guarda: puntos de solvencia y precio
+
+Cada semana se guarda una fila por empresa con `fecha`, `ticker`, `puntos_solvencia` y `precio`.
+
+- **`puntos_solvencia`** son los puntos totales que muestra la web con el screener por defecto, `solventes`, incluido el −99 por dilución (§7.5). No es solo el bloque de deuda. La puntuación de §7 ya está construida para primar la solvencia: LT Debt/Eq, Debt/Eq y Current Ratio forman el bloque que más pesa (§7.1). Además es el número con el que se decide la compra (umbral de 16, §7.6). Guardar otro número obligaría a mantener dos definiciones de "solvente".
+- **`precio`** es el campo `Price` de la misma ficha de Finviz y de la misma lectura (marca `data-precio` de la web). Así puntos y precio describen el mismo instante y salen de la misma fuente. Con el proceso en fin de semana, es el cierre del viernes.
+- **`fecha`** es la del inicio de la ejecución semanal, aunque los lotes terminen el domingo. Una fila por ejecución, no por día.
+- **Empresas sin ficha de Finviz:** tampoco tienen fila tras la repesca. En la web valen 0 puntos (§7.6), pero ese 0 no es una puntuación. Guardarlo fabricaría caídas del 100 % en los `diff_*` y falsas correlaciones.
+- **Lecturas sin terminar:** si la página no termina a tiempo, solo se guardan las empresas con ficha y con la dilución ya resuelta, porque sus puntos ya no cambian. Una empresa con la dilución pendiente podría perder 99 puntos después.
+
+### 9.3. Lotes, ventana de ejecución y duración
+
+La web despacha como mucho 18 peticiones por minuto al proxy (diseno_informatico §1). Cada empresa cuesta de 2 a 4: 1 ficha de Finviz y de 1 a 3 consultas a SEC EDGAR.
+
+**Duración estimada.** Por la ley de Little (trabajo / ritmo [34]), 2.582 empresas tardan como mínimo entre (2·2.582 + 1)/18 ≈ 4,8 h y (4·2.582 + 1)/18 ≈ 9,6 h, sin contar los reintentos.
+
+**Lotes.**
+
+- El universo se lee en **lotes de 100**, unos 26 por semana. Cada lote es una apertura de la página con `?tickers=`.
+- Se guarda en la base de datos al terminar cada lote. Una caída a mitad solo pierde el lote en curso, y al relanzar se sigue donde iba.
+- La espera máxima por lote es la de bolsa: `min(60, max(20, 2 · (4·N + 1) / 18))` minutos, es decir 45 min para N = 100. El factor 2 cubre que hasta la mitad de las peticiones necesiten un reintento.
+
+**Ventana: del sábado a las 00:01 al domingo a las 23:59.**
+
+- Con el mercado cerrado, todos los lotes miden el mismo estado del mercado (el cierre del viernes). Si el proceso se repartiera entre días de cotización, empresas de una misma semana se compararían con precios de días distintos.
+- No compite por el cupo de r.jina.ai, que es por IP, con los procesos de bolsa de lunes a viernes en el mismo servidor.
+- A partir del límite no se empieza ningún lote, y el email se envía con lo que haya. Los tickers que no dio tiempo a pedir aparecen en el resumen como "no procesados por fin de ventana".
+
+**Repesca.** Tras la pasada principal hay dos rondas, a los 2 y a los 4 minutos, solo con las empresas que siguen sin ficha: los fallos de red llegan a rachas.
+
+**Bloqueos del proxy.** Tras un lote con bloqueo de r.jina.ai se esperan 16 minutos. El bloqueo dura unos 15 para todos sus usuarios anónimos (diseno_informatico §1).
+
+### 9.4. Variaciones `diff_*`
+
+Para cada empresa, a partir de su **último dato conocido** (puntos *P* en la fecha *F*), `diff_X` = (*P* − *P*<sub>ref</sub>) / |*P*<sub>ref</sub>| × 100. *P*<sub>ref</sub> es el dato más reciente de esa empresa con fecha ≤ *F* − X, para X = 1 semana y 1, 3, 6, 9 y 12 meses de calendario.
+
+- **Tolerancia de 6 días.** El dato de referencia no puede ser más de 6 días anterior a *F* − X. Con ejecuciones semanales, una semana sin dato deja el `diff` vacío en vez de comparar en silencio con hace dos semanas.
+- **Base cero o negativa.** Con *P*<sub>ref</sub> = 0 la celda queda vacía. Con *P*<sub>ref</sub> negativo se divide por su valor absoluto, para que el signo del `diff` siga diciendo si la puntuación sube o baja. Es una convención: la variación porcentual no es simétrica y se dispara con bases pequeñas [36]. Con el −99 por dilución salen porcentajes muy grandes (pasar de 20 a −79 es −495 %). Por eso el top y el bottom 10 del resumen se ordenan por la diferencia en puntos (§9.6).
+- **Formato y redondeo.** Siempre con un decimal, en tanto por cien y con redondeo comercial (`+3,0 %`).
+
+### 9.5. Tabla de detalle (HTML adjunto)
+
+El adjunto lleva el título del proyecto, el subtítulo del análisis, la fecha de la primera y de la última descarga de empresa, y la tabla de detalle, con una fila por empresa:
+
+- `ticker`, con un enlace a la web con esa empresa;
+- `puntos_solvencia` y `fecha` de su último dato;
+- los seis `diff_*`;
+- `corr_puntos_precio` (§9.7).
+
+Se ordena por `diff_last_week` de mayor a menor, con las celdas vacías al final.
+
+Colores, con escalas secuenciales y divergentes de un solo tono según ColorBrewer [26]:
+
+- **Puntos de 16 o más:** escala de verdes, más intensa cuantos más puntos, del umbral al máximo teórico de 26,31 (§7.1). La escala es fija para que un color signifique lo mismo todas las semanas.
+- **Puntos por debajo de 16:** fondo gris claro y el sufijo `(poco)`, como en la web (§7.6). El umbral es el mismo: 16 exacto ya no es "poco".
+- **`diff_*`:** rojos si son negativos y verdes si son positivos, más intensos cuanto mayor es |diff|, con saturación en ±100 %. El texto pasa a blanco sobre los fondos oscuros para mantener el contraste [27].
+
+### 9.6. Resumen ejecutivo (cuerpo del email)
+
+- **Ejecución:**
+  - tickers pedidos, con puntos, sin ficha y, si los hay, no procesados por fin de ventana;
+  - duración total, de la primera a la última descarga;
+  - duración mínima, media, máxima y desviación típica de los lotes de 100;
+  - número de lotes con bloqueo del proxy.
+- **Puntuaciones de la última ejecución:** mínimo, media, máximo y desviación típica (muestral), y cuántas empresas tienen 16 puntos o más.
+- **Top 10 que más suben y bottom 10 que más bajan entre la última y la penúltima ejecución.** Solo entran las empresas con dato en las dos, ordenadas por la diferencia en puntos, con el % al lado (§9.4).
+- **Correlación entre la subida de la puntuación y la del precio** (§9.7).
+- **Espacio en disco:**
+  - la carpeta de datos del proceso (estados, informes y logs);
+  - la tabla en MariaDB (datos más índices, según `information_schema`; en InnoDB es una estimación).
+
+  No incluye el entorno Conda, que ocupa unos cientos de MB y casi no cambia.
+
+### 9.7. ¿Si la puntuación sube, sube el precio?
+
+**La medida.** Para cada empresa se calculan sus pasos semanales: entre dos ejecuciones consecutivas, como mucho 10 días entre ellas.
+
+- Δ*p*<sub>t</sub> es la variación de los puntos y *r*<sub>t</sub> la rentabilidad del precio en el mismo paso.
+- Se mide con el **coeficiente de Spearman** [32]. Es de rangos, así que no supone linealidad ni normalidad y aguanta los saltos de −99 por dilución y las colas gruesas de las rentabilidades.
+
+**Por qué predictiva.** La que se publica por empresa (columna `corr_puntos_precio`) es la **predictiva**: Δ*p*<sub>t</sub> frente a *r*<sub>t+1</sub>, es decir, si la puntuación sube esta semana, ¿sube el precio la semana siguiente?
+
+- **La simultánea está contaminada.** Varios criterios del screener dependen del propio precio: precio sobre la SMA20, Perf 26W, Perf 3Y, distancia al mínimo de 52 semanas, RSI y, a través del precio, P/E, P/S y EV/Sales. Una correlación simultánea saldría positiva en parte de forma mecánica. Se muestra solo como referencia.
+- **La predictiva es la pregunta útil.** Si los mercados descuentan de inmediato la información pública [38], no debería haber relación predictiva. La evidencia de deriva tras la publicación de resultados [37] y de que las señales contables predicen rentabilidades [7] justifica buscarla.
+
+**Mínimo de datos.** Cada empresa necesita **8 pares** (10 ejecuciones seguidas). Con *n* = 8 hace falta |ρ| ≥ 0,74 para ser significativa al 5 % [35]. Con menos, el coeficiente es demasiado ruidoso y la celda queda vacía. Hasta tener ese histórico, el resumen dice "datos insuficientes" y cuántas ejecuciones hay.
+
+**Muchas empresas a la vez.** Con unas 2.600 empresas, al 5 % saldrían unas 130 "significativas" por azar. Se corrige con **Benjamini-Hochberg** [33], que controla la proporción esperada de falsos descubrimientos (5 %). Es el mismo criterio que bolsa usa para publicar subgrupos. El resumen da:
+
+- cuántas empresas tienen datos suficientes;
+- la mediana de ρ;
+- el % con ρ > 0;
+- cuántas son significativas, positivas y negativas, tras la corrección.
+
+**Correlación conjunta.** Además se calcula una correlación con todos los pares de todas las empresas. Su *p* es optimista, porque las empresas de una misma semana comparten el movimiento del mercado y los pares no son independientes [40]. Se lee como indicación, no como contraste formal.
+
+### 9.8. Limitaciones del proceso semanal
+
+- **El universo es una foto.** La cartera de IWV se actualiza a mano (diseno_informatico §10.2). Las altas y bajas del índice no entran solas, y las empresas que dejan de cotizar salen "sin ficha".
+- **La puntuación evoluciona con la web.** Si cambian los pesos de §7, las series antes y después del cambio no son comparables. Habría que anotar la fecha del cambio al interpretar los `diff_*`.
+- **Precio de Finviz.** Es el último cotizado que muestra la ficha, sin ajustar por dividendos. La rentabilidad semanal de las empresas que reparten dividendo se infravalora ligeramente en la semana del pago.
+- **Correlación no es causalidad.** Una relación predictiva positiva diría que la puntuación anticipa el precio, no que lo cause. Con pocas semanas por empresa el estudio tiene poca potencia: que no se detecte relación no prueba que no exista.
 
 ## Referencias
 
@@ -442,3 +564,21 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 [30] E. F. Fama y K. R. French, "The Cross-Section of Expected Stock Returns", *The Journal of Finance*, 47(2), 1992, pp. 427-465.
 
 [31] E. F. Fama y K. R. French, "Disappearing dividends: changing firm characteristics or lower propensity to pay?", *Journal of Financial Economics*, 60(1), 2001, pp. 3-43.
+
+[32] C. Spearman, "The proof and measurement of association between two things", *The American Journal of Psychology*, 15(1), 1904, pp. 72-101.
+
+[33] Y. Benjamini e Y. Hochberg, "Controlling the false discovery rate: a practical and powerful approach to multiple testing", *Journal of the Royal Statistical Society, Series B*, 57(1), 1995, pp. 289-300.
+
+[34] J. D. C. Little, "A proof for the queuing formula: L = λW", *Operations Research*, 9(3), 1961, pp. 383-387.
+
+[35] J. H. Zar, "Significance testing of the Spearman rank correlation coefficient", *Journal of the American Statistical Association*, 67(339), 1972, pp. 578-580.
+
+[36] L. Törnqvist, P. Vartia e Y. O. Vartia, "How should relative changes be measured?", *The American Statistician*, 39(1), 1985, pp. 43-46.
+
+[37] V. L. Bernard y J. K. Thomas, "Post-earnings-announcement drift: delayed price response or risk premium?", *Journal of Accounting Research*, 27 (Supplement), 1989, pp. 1-36.
+
+[38] E. F. Fama, "Efficient capital markets: a review of theory and empirical work", *The Journal of Finance*, 25(2), 1970, pp. 383-417.
+
+[39] FTSE Russell, *Russell US Indexes Construction and Methodology* (ftserussell.com), y BlackRock, *iShares Russell 3000 ETF (IWV)*, cartera completa ("Detailed Holdings and Analytics") publicada a diario en ishares.com.
+
+[40] M. A. Petersen, "Estimating standard errors in finance panel data sets: comparing approaches", *The Review of Financial Studies*, 22(1), 2009, pp. 435-480.
