@@ -29,7 +29,7 @@ python -m http.server 8000
 
 ## Proceso semanal de solvencia (backend)
 
-Aparte de la web, un proceso Python ([diseno_funcional.md §9](diseno_funcional.md#9-evolución-semanal-de-la-solvencia-de-todo-el-russell-3000)) abre cada **sábado a las 00:01** esta misma web con un navegador sin ventana para las ~2.600 empresas del **Russell 3000**, en lotes de 100. Guarda la puntuación y el precio de cada empresa en MariaDB (`finvizanalysis.solvencia`) y envía un email:
+Aparte de la web, un proceso Python ([diseno_funcional.md §9](diseno_funcional.md#9-evolución-semanal-de-la-solvencia-de-todo-el-russell-3000)) se lanza **cada noche a las 23:00** (hora de Madrid) y, una vez por semana, abre esta misma web con un navegador sin ventana para las ~2.600 empresas del **Russell 3000**, en lotes de 100. Si el servidor se reinicia a mitad, el lanzamiento de la noche siguiente reanuda el ciclo desde la última empresa guardada. Guarda la puntuación y el precio de cada empresa en MariaDB (`finvizanalysis.solvencia`) y envía un email:
 
 - **Cuerpo:** un resumen ejecutivo con las cifras de la ejecución, las estadísticas de las puntuaciones, el top y el bottom 10 de la semana, la correlación entre subida de puntos y de precio, y el espacio en disco.
 - **Adjunto:** un HTML con una fila por empresa, con sus variaciones de 1 semana a 12 meses.

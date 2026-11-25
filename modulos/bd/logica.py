@@ -37,6 +37,10 @@ class Repositorio(ABC):
         """Tickers ya guardados en esa fecha."""
 
     @abstractmethod
+    def fecha_mas_reciente(self) -> dt.date | None:
+        """La fecha mas reciente con algun dato, o None si la tabla esta vacia."""
+
+    @abstractmethod
     def historico(self) -> pd.DataFrame:
         """Toda la tabla: columnas COLUMNAS, fecha como Timestamp."""
 
@@ -69,6 +73,9 @@ class RepositorioMemoria(Repositorio):
 
     def tickers_con_dato(self, fecha) -> set[str]:
         return {t for (f, t) in self.datos if f == fecha}
+
+    def fecha_mas_reciente(self) -> dt.date | None:
+        return max((f for f, _ in self.datos), default=None)
 
     def historico(self) -> pd.DataFrame:
         return _df((f, t, p, pr) for (f, t), (p, pr) in self.datos.items())
@@ -114,6 +121,12 @@ class RepositorioMariaDB(Repositorio):
         with self.motor.connect() as con:
             filas = con.execute(text(f"SELECT ticker FROM {self._nombre} WHERE fecha = :f"), {"f": fecha})
             return {r[0] for r in filas}
+
+    def fecha_mas_reciente(self) -> dt.date | None:
+        from sqlalchemy import text
+        with self.motor.connect() as con:
+            fecha = con.execute(text(f"SELECT MAX(fecha) FROM {self._nombre}")).scalar()
+        return pd.Timestamp(fecha).date() if fecha is not None else None
 
     def historico(self) -> pd.DataFrame:
         from sqlalchemy import text

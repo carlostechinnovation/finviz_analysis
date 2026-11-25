@@ -1,4 +1,4 @@
-"""El log del proceso semanal se vacia al arrancar y solo se conserva al reanudar."""
+"""El log del proceso se vacia al arrancar un ciclo nuevo y solo se conserva al reanudar."""
 import logging
 
 import pytest
@@ -8,19 +8,10 @@ from apoyo import config_prueba
 
 
 @pytest.fixture
-def config(tmp_path):
-    """Config de prueba con la carpeta de logs; restaura el logger raiz al acabar."""
-    raiz = logging.getLogger()
-    antes, nivel = list(raiz.handlers), raiz.level
+def config(tmp_path, log_restaurado):
     c = config_prueba(tmp_path)
     c.ruta("dir_logs").mkdir(parents=True)
-    yield c
-    for h in list(raiz.handlers):
-        raiz.removeHandler(h)
-        h.close()
-    for h in antes:
-        raiz.addHandler(h)
-    raiz.setLevel(nivel)
+    return c
 
 
 def _escribir(config, texto, **kw):

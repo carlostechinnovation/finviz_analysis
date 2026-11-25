@@ -8,19 +8,29 @@
 ==============================================================
 
 --------------------------------------------------------------
-  TAREA: Solvencia semanal (sabado 00:01, hora del servidor)
-
-  El propio proceso no empieza lotes a partir del domingo 23:59
-  (config/configuracion.yml, seccion ventana) y envia el email al
-  terminar. Windows para por defecto las tareas que superan 72 h:
-  queda margen sobre las 48 h de la ventana.
+  1. Borrar la tarea semanal anterior (solo una vez)
 --------------------------------------------------------------
-schtasks /create /tn "FinvizAnalysis_Solvencia_Semanal" /tr "C:\DATOS\GITHUB\finviz_analysis\planificacion\run_solvencia_auto.bat" /sc weekly /d SAT /st 00:01 /ru SYSTEM /rl HIGHEST /f
+schtasks /delete /tn "FinvizAnalysis_Solvencia_Semanal" /f
+
+--------------------------------------------------------------
+  2. TAREA: Solvencia, lanzamiento diario a las 23:00
+     (hora local del servidor = hora de Madrid)
+
+  Cada lanzamiento decide solo (diseno_informatico.md 6.1):
+    - dato mas reciente de la tabla con 7 dias o mas -> ciclo nuevo;
+    - ciclo sin terminar (error, reinicio del servidor) -> lo reanuda;
+    - ciclo ya terminado -> no hace nada.
+  Un lanzamiento no empieza lotes pasadas 22 h (ciclo.duracion_max_horas),
+  asi que nunca se solapa con el de la noche siguiente. Si aun asi
+  siguiera en marcha, Task Scheduler no arranca una segunda copia
+  (opcion por defecto: no iniciar una instancia nueva).
+--------------------------------------------------------------
+schtasks /create /tn "FinvizAnalysis_Solvencia_Diaria" /tr "C:\DATOS\GITHUB\finviz_analysis\planificacion\run_solvencia_auto.bat" /sc daily /st 23:00 /ru SYSTEM /rl HIGHEST /f
 
 --------------------------------------------------------------
   Consultar / lanzar a mano / deshabilitar / borrar
 --------------------------------------------------------------
-schtasks /query  /tn "FinvizAnalysis_Solvencia_Semanal" /v /fo LIST
-schtasks /run    /tn "FinvizAnalysis_Solvencia_Semanal"
-schtasks /change /tn "FinvizAnalysis_Solvencia_Semanal" /disable
-schtasks /delete /tn "FinvizAnalysis_Solvencia_Semanal" /f
+schtasks /query  /tn "FinvizAnalysis_Solvencia_Diaria" /v /fo LIST
+schtasks /run    /tn "FinvizAnalysis_Solvencia_Diaria"
+schtasks /change /tn "FinvizAnalysis_Solvencia_Diaria" /disable
+schtasks /delete /tn "FinvizAnalysis_Solvencia_Diaria" /f

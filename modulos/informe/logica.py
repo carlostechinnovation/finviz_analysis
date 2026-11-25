@@ -184,7 +184,7 @@ def lineas_resumen(r: Resumen) -> list[tuple[str, list]]:
             f"Fecha de la ejecución: {r.fecha}. Primera descarga: {fecha_hora(r.inicio_descargas)}; "
             f"última: {fecha_hora(r.fin_descargas)}.",
             f"Tickers pedidos: {rc['n_universo']}. Con puntos: {rc['n_con_puntos']}. Sin ficha de Finviz: "
-            f"{rc['n_sin_ficha']}." + (f" No procesados por fin de ventana: {rc['n_no_procesados']}."
+            f"{rc['n_sin_ficha']}." + (f" No procesados (no se llegaron a pedir): {rc['n_no_procesados']}."
                                        if rc["n_no_procesados"] else ""),
             f"Duración total: {duracion(du['total_seg']) or '—'}. Por lote ({lotes['n']} lotes): mínima "
             f"{duracion(lotes['min']) or '—'}, media {duracion(lotes['media']) or '—'}, máxima "

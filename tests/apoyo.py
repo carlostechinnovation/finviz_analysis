@@ -7,7 +7,7 @@ from modulos.lector.logica import Lector, Puntuacion, ResultadoLectura
 
 
 def config_prueba(tmp_path, **cambios) -> Config:
-    """Configuracion de prueba. cambios: ruta con '__' en vez de '.' (ventana__dias_reanudar=1)."""
+    """Configuracion de prueba. cambios: ruta con '__' en vez de '.' (ciclo__duracion_max_horas=1)."""
     datos = {
         "rutas": {"dir_base": str(tmp_path), "dir_ejecuciones": str(tmp_path / "ejecuciones"),
                   "dir_informes": str(tmp_path / "informes"), "dir_logs": str(tmp_path / "logs")},
@@ -17,7 +17,7 @@ def config_prueba(tmp_path, **cambios) -> Config:
                     "timeout_max_min": 60, "proxy_peticiones_por_minuto": 18,
                     "proxy_peticiones_max_por_ticker": 4, "repesca_pausas_min": [2, 4],
                     "espera_bloqueo_min": 16},
-        "ventana": {"dia_limite": 7, "hora_limite": "23:59", "duracion_max_horas": 48, "dias_reanudar": 2},
+        "ciclo": {"dias": 7, "duracion_max_horas": 22},
         "analisis": {"umbral_puntos": 16, "puntos_maximos": 26.31, "saturacion_diff_pct": 100,
                      "tolerancia_dias": 6, "top_n": 10,
                      "correlacion": {"min_pares": 8, "max_hueco_dias": 10, "alfa_fdr": 0.05}},

@@ -381,7 +381,7 @@ Por ejemplo, en LT Debt/Eq (umbral 1, "incumple mucho" por encima de 2), un valo
 
 ## 9. Evolución semanal de la solvencia de todo el Russell 3000
 
-La web responde a "¿por qué esta empresa no sale en mi screener?" para unas pocas empresas y en un momento dado. El **proceso semanal** (código Python fuera de `docs/`; detalle técnico en [diseno_informatico.md §6](diseno_informatico.md#6-proceso-semanal-de-solvencia-backend)) responde a otra pregunta: **¿cómo evoluciona la solvencia de todas las empresas, y se mueve el precio cuando lo hace la puntuación?** Para eso abre la propia web, con un navegador sin ventana, para todo el universo, y guarda cada semana la puntuación y el precio de cada empresa.
+La web responde a "¿por qué esta empresa no sale en mi screener?" para unas pocas empresas y en un momento dado. El **proceso semanal** (código Python fuera de `docs/`; detalle técnico en [diseno_informatico.md §6](diseno_informatico.md#6-proceso-semanal-de-solvencia-backend)) responde a otra pregunta: **¿cómo evoluciona la solvencia de todas las empresas, y se mueve el precio cuando lo hace la puntuación?** Para eso abre la propia web, con un navegador sin ventana, para todo el universo, y guarda cada semana la puntuación y el precio de cada empresa. Se lanza todas las noches a las 23:00 y cada lanzamiento decide si empieza el ciclo de la semana, reanuda uno que se cortó o no hace nada (§9.3).
 
 ### 9.1. Universo: el Russell 3000
 
@@ -403,12 +403,12 @@ Alternativas descartadas:
 Cada semana se guarda una fila por empresa con `fecha`, `ticker`, `puntos_solvencia` y `precio`.
 
 - **`puntos_solvencia`** son los puntos totales que muestra la web con el screener por defecto, `solventes`, incluido el −99 por dilución (§7.5). No es solo el bloque de deuda. La puntuación de §7 ya está construida para primar la solvencia: LT Debt/Eq, Debt/Eq y Current Ratio forman el bloque que más pesa (§7.1). Además es el número con el que se decide la compra (umbral de 16, §7.6). Guardar otro número obligaría a mantener dos definiciones de "solvente".
-- **`precio`** es el campo `Price` de la misma ficha de Finviz y de la misma lectura (marca `data-precio` de la web). Así puntos y precio describen el mismo instante y salen de la misma fuente. Con el proceso en fin de semana, es el cierre del viernes.
-- **`fecha`** es la del inicio de la ejecución semanal, aunque los lotes terminen el domingo. Una fila por ejecución, no por día.
+- **`precio`** es el campo `Price` de la misma ficha de Finviz y de la misma lectura (marca `data-precio` de la web). Así puntos y precio describen el mismo instante y salen de la misma fuente. Como el ciclo empieza a las 23:00 de Madrid, con la bolsa de Nueva York ya cerrada, es el cierre de ese día (§9.3).
+- **`fecha`** es la del inicio del ciclo semanal, aunque los lotes terminen a la mañana siguiente o el ciclo se reanude otro día. Una fila por ciclo, no por día.
 - **Empresas sin ficha de Finviz:** tampoco tienen fila tras la repesca. En la web valen 0 puntos (§7.6), pero ese 0 no es una puntuación. Guardarlo fabricaría caídas del 100 % en los `diff_*` y falsas correlaciones.
 - **Lecturas sin terminar:** si la página no termina a tiempo, solo se guardan las empresas con ficha y con la dilución ya resuelta, porque sus puntos ya no cambian. Una empresa con la dilución pendiente podría perder 99 puntos después.
 
-### 9.3. Lotes, ventana de ejecución y duración
+### 9.3. Lotes, lanzamiento diario y duración
 
 La web despacha como mucho 18 peticiones por minuto al proxy (diseno_informatico §1). Cada empresa cuesta de 2 a 4: 1 ficha de Finviz y de 1 a 3 consultas a SEC EDGAR.
 
@@ -417,14 +417,18 @@ La web despacha como mucho 18 peticiones por minuto al proxy (diseno_informatico
 **Lotes.**
 
 - El universo se lee en **lotes de 100**, unos 26 por semana. Cada lote es una apertura de la página con `?tickers=`.
-- Se guarda en la base de datos al terminar cada lote. Una caída a mitad solo pierde el lote en curso, y al relanzar se sigue donde iba.
+- Se guarda en la base de datos al terminar cada lote. Una caída a mitad solo pierde el lote en curso, y el siguiente lanzamiento sigue donde iba.
 - La espera máxima por lote es la de bolsa: `min(60, max(20, 2 · (4·N + 1) / 18))` minutos, es decir 45 min para N = 100. El factor 2 cubre que hasta la mitad de las peticiones necesiten un reintento.
 
-**Ventana: del sábado a las 00:01 al domingo a las 23:59.**
+**Lanzamiento diario y ciclo semanal.**
 
-- Con el mercado cerrado, todos los lotes miden el mismo estado del mercado (el cierre del viernes). Si el proceso se repartiera entre días de cotización, empresas de una misma semana se compararían con precios de días distintos.
-- No compite por el cupo de r.jina.ai, que es por IP, con los procesos de bolsa de lunes a viernes en el mismo servidor.
-- A partir del límite no se empieza ningún lote, y el email se envía con lo que haya. Los tickers que no dio tiempo a pedir aparecen en el resumen como "no procesados por fin de ventana".
+- **Por qué diario.** Antes la tarea se lanzaba una vez por semana (sábado 00:01). Si el servidor se reiniciaba durante las 5–10 h del recorrido, nadie relanzaba el proceso hasta la semana siguiente y se perdía la semana. Ahora la tarea se lanza todas las noches. Cada lanzamiento mira la fecha más reciente de la tabla y la traza del log, que tiene una línea por empresa leída. Un ciclo cortado se reanuda como mucho 24 h después, desde la última empresa guardada. Es la técnica clásica de punto de control y reanudación (*checkpoint/restart*) [42]: el progreso queda en almacenamiento persistente tras cada unidad de trabajo, aquí cada lote de 100.
+- **Ciclo semanal.** Empieza un ciclo nuevo cuando el dato más reciente tiene 7 días o más. Con "7 o más", y no "más de 7", el ciclo cae siempre la misma noche de la semana. Si un ciclo no termina en esos 7 días, se abandona: sus filas se quedan en la tabla y el siguiente empieza de cero.
+- **Por qué a las 23:00 (hora de Madrid).** La bolsa de Nueva York cotiza de 9:30 a 16:00, hora de Nueva York [41]. En hora de Madrid, cierra a las 22:00 y abre a las 15:30; una hora antes (21:00 y 14:30) en las semanas de marzo y de octubre-noviembre en que solo uno de los dos países ha cambiado de hora. A las 23:00 el mercado ya está cerrado y quedan al menos 15 h hasta la apertura siguiente. Un ciclo normal, de 5–10 h, lee todas las empresas con un único cierre: el del día de inicio.
+- **Lo que se pierde respecto al fin de semana.** Las empresas leídas en una reanudación miden el cierre de otro día. Es el precio de no perder la semana, y solo afecta a los ciclos cortados. Si se quiere que el ciclo mida el cierre del viernes, como antes, el primer ciclo debe empezar un viernes por la noche. El día de la semana lo fija el primer ciclo, y se desplaza un día si un ciclo cae antes de guardar su primer lote.
+- **Tope por lanzamiento: 22 h.** Un lanzamiento no empieza lotes pasadas 22 h, así que nunca se solapa con el de la noche siguiente. Si alguna vez lo alcanza, lo que falte lo sigue ese siguiente lanzamiento.
+- **Email.** Se envía una vez por ciclo, al terminarlo, con la tabla completa. Si el envío falla, el ciclo no se da por terminado y la noche siguiente se reintenta.
+- **Cupo de r.jina.ai.** El cupo es por IP. Los días laborables el ciclo puede coincidir con otros procesos del mismo servidor que abran la web (bolsa). Los bloqueos del proxy se ven en el resumen.
 
 **Repesca.** Tras la pasada principal hay dos rondas, a los 2 y a los 4 minutos, solo con las empresas que siguen sin ficha: los fallos de red llegan a rachas.
 
@@ -458,7 +462,7 @@ Colores, con escalas secuenciales y divergentes de un solo tono según ColorBrew
 ### 9.6. Resumen ejecutivo (cuerpo del email)
 
 - **Ejecución:**
-  - tickers pedidos, con puntos, sin ficha y, si los hay, no procesados por fin de ventana;
+  - tickers pedidos, con puntos, sin ficha y, si los hay, no procesados (no se llegaron a pedir);
   - duración total, de la primera a la última descarga;
   - duración mínima, media, máxima y desviación típica de los lotes de 100;
   - número de lotes con bloqueo del proxy.
@@ -582,3 +586,7 @@ Colores, con escalas secuenciales y divergentes de un solo tono según ColorBrew
 [39] FTSE Russell, *Russell US Indexes Construction and Methodology* (ftserussell.com), y BlackRock, *iShares Russell 3000 ETF (IWV)*, cartera completa ("Detailed Holdings and Analytics") publicada a diario en ishares.com.
 
 [40] M. A. Petersen, "Estimating standard errors in finance panel data sets: comparing approaches", *The Review of Financial Studies*, 22(1), 2009, pp. 435-480.
+
+[41] New York Stock Exchange, *Holidays and Trading Hours* (nyse.com/markets/hours-calendars): sesión regular de 9:30 a 16:00, hora de Nueva York. NASDAQ tiene el mismo horario regular.
+
+[42] E. N. Elnozahy, L. Alvisi, Y.-M. Wang y D. B. Johnson, "A survey of rollback-recovery protocols in message-passing systems", *ACM Computing Surveys*, 34(3), 2002, pp. 375-408.

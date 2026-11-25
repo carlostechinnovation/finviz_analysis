@@ -1,21 +1,25 @@
 """
-Ejecucion semanal por lotes (diseno_informatico.md 6.1).
+Ciclo semanal por lotes con lanzamiento diario (diseno_informatico.md 6.1).
 
-  1. Fecha de la ejecucion: la de hoy, o la de una ejecucion sin terminar de
-     hace como mucho ventana.dias_reanudar dias (se reanuda con su fecha).
-  2. Limite: el siguiente ventana.dia_limite a ventana.hora_limite (domingo
-     23:59), sin pasar de inicio + ventana.duracion_max_horas. A partir del
-     limite no se empieza ningun lote.
-  3. Pasada principal: los tickers del universo sin dato en esa fecha, en
-     lotes de lectura.tamano_lote. Cada lote se guarda en BD al terminar.
+  1. Decision (decidir): con F = la fecha mas reciente de la tabla,
+       - sin datos o F con ciclo.dias dias o mas            -> ciclo NUEVO con fecha de hoy;
+       - si no, y el log termina en "CICLO TERMINADO F"     -> NADA que hacer;
+       - si no (error, corte o sin log)                     -> REANUDAR el ciclo F.
+  2. Limite del lanzamiento: ahora + ciclo.duracion_max_horas. A partir de el
+     no se empieza ningun lote; el ciclo queda sin terminar y lo reanuda el
+     siguiente lanzamiento.
+  3. Pasada principal: los tickers del universo sin dato en esa fecha y que el
+     log no da como ya pedidos en la pasada principal, en lotes de
+     lectura.tamano_lote. Cada lote se guarda en BD al terminar y deja una
+     linea TICKER por ticker en el log (modulos/registro).
   4. Repesca: una ronda por cada pausa de lectura.repesca_pausas_min, solo con
      los tickers que siguen sin dato (las clases partidas de iShares se piden
      con guion: BFB -> BF-B).
   5. Tras un lote con bloqueo del proxy se espera lectura.espera_bloqueo_min.
 
-El estado (lotes con sus tiempos, tickers pedidos) se guarda en un JSON por
-fecha en rutas.dir_ejecuciones, tras cada lote: si el proceso cae, al
-relanzarlo se sigue donde iba y las estadisticas del resumen no se pierden.
+El JSON de estado por fecha (rutas.dir_ejecuciones) solo guarda las
+estadisticas del informe (lotes con sus tiempos, tickers pedidos): la
+decision y el punto de reanudacion salen de la tabla y del log.
 """
 import datetime as dt
 import json
@@ -25,11 +29,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from modulos.lector.logica import Lector, timeout_lote_min, url_lote
+from modulos.registro import logica as registro
 
 logger = logging.getLogger(__name__)
 
 FORMATO = "%Y-%m-%dT%H:%M:%S"
 MIN_MINUTOS_PARA_LOTE = 1.0
+NUEVO, REANUDAR, NADA = "nuevo", "reanudar", "nada"
 
 
 @dataclass
@@ -51,9 +57,9 @@ class Lote:
 
 @dataclass
 class Estado:
-    fecha: str                 # AAAA-MM-DD: la de las filas de la tabla
-    inicio: str
-    limite: str
+    fecha: str                 # AAAA-MM-DD: la de las filas de la tabla (inicio del ciclo)
+    inicio: str                # primer lanzamiento del ciclo
+    limite: str                # limite del lanzamiento en curso
     n_universo: int = 0
     pedidos: list = field(default_factory=list)     # tickers pedidos al menos una vez
     lotes: list = field(default_factory=list)       # [Lote]
@@ -99,54 +105,59 @@ def leer_estado(dir_ejecuciones: Path, fecha: str) -> Estado | None:
     return Estado.de_dict(json.loads(ruta.read_text(encoding="utf-8")))
 
 
-def calcular_limite(inicio: dt.datetime, dia_limite: int, hora_limite: str, max_horas: float) -> dt.datetime:
-    """Siguiente dia_limite (ISO) a hora_limite desde inicio, sin pasar de inicio + max_horas."""
-    h, m = (int(x) for x in str(hora_limite).split(":"))
-    candidato = inicio.replace(hour=h, minute=m, second=0, microsecond=0)
-    candidato += dt.timedelta(days=(int(dia_limite) - inicio.isoweekday()) % 7)
-    if candidato <= inicio:
-        candidato += dt.timedelta(days=7)
-    return min(candidato, inicio + dt.timedelta(hours=float(max_horas)))
+# ----------------------------------------------------------------- decision
+@dataclass
+class Decision:
+    accion: str                # NUEVO, REANUDAR o NADA
+    fecha: dt.date             # la del ciclo nuevo o la del ciclo a reanudar / ya terminado
+    motivo: str
 
 
-def buscar_sin_terminar(config, ahora: dt.datetime) -> Estado | None:
-    """La ejecucion sin terminar mas reciente de los ultimos ventana.dias_reanudar dias (con o sin limite pasado)."""
-    dir_ej = config.ruta("dir_ejecuciones")
-    dias = int(config.get("ventana.dias_reanudar", 2))
-    for atras in range(0, dias + 1):
-        previo = leer_estado(dir_ej, (ahora.date() - dt.timedelta(days=atras)).isoformat())
-        if previo and not previo.terminada:
-            return previo
-    return None
+def decidir(fecha_reciente: dt.date | None, lineas_log: list[str], hoy: dt.date, dias_ciclo: int) -> Decision:
+    """Que hace este lanzamiento, a partir de la fecha mas reciente de la tabla y del log principal."""
+    if fecha_reciente is None:
+        return Decision(NUEVO, hoy, "la tabla no tiene datos")
+    edad = (hoy - fecha_reciente).days
+    if edad >= dias_ciclo:
+        motivo = f"el dato mas reciente ({fecha_reciente}) tiene {edad} dias (>= {dias_ciclo})"
+        if not registro.ciclo_terminado(lineas_log, fecha_reciente):
+            motivo += f"; el ciclo {fecha_reciente} quedo sin terminar y se abandona"
+        return Decision(NUEVO, hoy, motivo)
+    if registro.ciclo_terminado(lineas_log, fecha_reciente):
+        return Decision(NADA, fecha_reciente,
+                        f"el ciclo {fecha_reciente} ya termino; el siguiente empieza el "
+                        f"{fecha_reciente + dt.timedelta(days=dias_ciclo)}")
+    ultima = registro.ultima_linea(lineas_log) or "(log vacio o inexistente)"
+    return Decision(REANUDAR, fecha_reciente, f"el ciclo {fecha_reciente} no termino; ultima linea del log: {ultima}")
 
 
-def se_reanudara(config, ahora: dt.datetime) -> bool:
-    """Lo que decidira iniciar_o_reanudar, sin escribir en el log (se usa antes de abrirlo)."""
-    previo = buscar_sin_terminar(config, ahora)
-    return previo is not None and ahora < previo.limite_dt
-
-
-def iniciar_o_reanudar(config, ahora: dt.datetime) -> Estado:
-    """Estado de la ejecucion: reanuda la mas reciente sin terminar si es reciente; si no, una nueva."""
-    dir_ej = config.ruta("dir_ejecuciones")
-    previo = buscar_sin_terminar(config, ahora)
-    if previo:
-        if ahora < previo.limite_dt:
-            logger.info("Se reanuda la ejecucion del %s (limite %s)", previo.fecha, previo.limite)
-            return previo
-        logger.info("La ejecucion sin terminar del %s ya paso su limite: no se reanuda", previo.fecha)
-    fecha = ahora.date().isoformat()
-    previo = leer_estado(dir_ej, fecha)
-    limite = calcular_limite(ahora, config.get("ventana.dia_limite", 7), config.get("ventana.hora_limite", "23:59"),
-                             config.get("ventana.duracion_max_horas", 48))
-    if previo:   # relanzada el mismo dia tras terminar: completa lo que falte y conserva los lotes
-        previo.terminada, previo.email_enviado, previo.limite = False, False, limite.strftime(FORMATO)
-        return previo
-    return Estado(fecha, ahora.strftime(FORMATO), limite.strftime(FORMATO))
+def preparar_estado(config, decision: Decision, ahora: dt.datetime, pedidos_log: set) -> Estado:
+    """Estado del lanzamiento: nuevo, o el JSON del ciclo a reanudar (creado si falta), con el limite de hoy."""
+    limite = (ahora + dt.timedelta(hours=float(config.get("ciclo.duracion_max_horas", 22)))).strftime(FORMATO)
+    fecha = decision.fecha.isoformat()
+    previo = leer_estado(config.ruta("dir_ejecuciones"), fecha) if decision.accion == REANUDAR else None
+    if previo is None:
+        estado = Estado(fecha, ahora.strftime(FORMATO), limite)
+    else:
+        estado = previo
+        estado.limite, estado.terminada, estado.email_enviado = limite, False, False
+    estado.pedidos = sorted(set(estado.pedidos) | set(pedidos_log))
+    return estado
 
 
 def trocear(lista: list, tamano: int) -> list[list]:
     return [lista[i:i + tamano] for i in range(0, len(lista), tamano)]
+
+
+def _resultado_ticker(p) -> tuple[str, str]:
+    """(RESULTADO, detalle) de la linea TICKER de una casilla leida."""
+    if p is None:
+        return registro.NO_LEIDO, ""
+    if p.valida:
+        return registro.GUARDADO, f"puntos={p.puntos:g} precio={'' if p.precio is None else f'{p.precio:g}'}"
+    if p.sin_ficha:
+        return registro.SIN_FICHA, f"motivo={p.motivo or ''}"
+    return registro.NO_GUARDADO, f"dilucion={p.dilucion or ''} puntos={'' if p.puntos is None else f'{p.puntos:g}'}"
 
 
 class Ejecutor:
@@ -182,9 +193,13 @@ class Ejecutor:
             pedidos = set(tickers)
             filas = [(p.ticker, p.puntos, p.precio) for p in lectura.validas() if p.ticker in pedidos]
             n_guardados = self.repo.guardar(estado.fecha_date, filas)
+            for t in tickers:   # tras guardar: GUARDADO solo si ya esta en la tabla
+                logger.info(registro.linea_ticker(t, ronda, *_resultado_ticker(lectura.puntuaciones.get(t))))
         except Exception as exc:   # un lote fallido no para la ejecucion: sus tickers van a la repesca
             error = f"{type(exc).__name__}: {exc}"[:500]
             logger.error("Lote %d fallido: %s", numero, error)
+            for t in tickers:
+                logger.info(registro.linea_ticker(t, ronda, registro.ERROR_LOTE))
         lote = Lote(numero, ronda, inicio.strftime(FORMATO), self.reloj().strftime(FORMATO), len(tickers),
                     n_guardados, terminada, bloqueo, error)
         logger.info("Lote %d: %d de %d con puntos%s", numero, n_guardados, len(tickers),
@@ -195,34 +210,42 @@ class Ejecutor:
         return lote
 
     def _ronda(self, estado: Estado, tickers: list[str], ronda: int) -> bool:
-        """Lotes de una ronda. False si se alcanzo el limite de la ventana."""
+        """Lotes de una ronda. False si se alcanzo el limite del lanzamiento."""
         for trozo in trocear(tickers, int(self.p["tamano_lote"])):
             if self._minutos_restantes(estado) < MIN_MINUTOS_PARA_LOTE:
-                logger.warning("Limite de la ventana (%s): no se empiezan mas lotes", estado.limite)
+                logger.warning("Limite del lanzamiento (%s): no se empiezan mas lotes", estado.limite)
                 return False
             lote = self._lote(estado, trozo, ronda)
             if lote.bloqueo_proxy and not self._esperar(estado, float(self.p["espera_bloqueo_min"])):
                 return False
         return True
 
-    def ejecutar(self, estado: Estado, universo: list[str], alias: dict) -> Estado:
+    def ejecutar(self, estado: Estado, universo: list[str], alias: dict, ya_pedidos=frozenset()) -> Estado:
+        """
+        ya_pedidos: tickers que el log da como pedidos en la pasada principal de
+        este ciclo (reanudacion); no se repiten en ella, pero si en la repesca.
+        estado.terminada queda False si se alcanzo el limite del lanzamiento.
+        """
         estado.n_universo = len(universo)
         guardar_estado(self.dir_ej, estado)
         hechos = self.repo.tickers_con_dato(estado.fecha_date)
-        pendientes = [t for t in universo if t not in hechos and alias.get(t) not in hechos]
-        logger.info("Ejecucion %s: %d tickers, %d ya con dato, %d pendientes", estado.fecha, len(universo),
-                    len(universo) - len(pendientes), len(pendientes))
-        sigue = self._ronda(estado, pendientes, 0)
+        con_dato = {t for t in universo if t in hechos or alias.get(t) in hechos}
+        pendientes = [t for t in universo if t not in con_dato and t not in ya_pedidos]
+        logger.info("Ciclo %s: %d tickers, %d ya con dato, %d ya pedidos sin dato (van a la repesca), "
+                    "%d pendientes en la pasada principal", estado.fecha, len(universo), len(con_dato),
+                    len(universo) - len(con_dato) - len(pendientes), len(pendientes))
+        completo = self._ronda(estado, pendientes, 0)
         for ronda, pausa in enumerate(self.p.get("repesca_pausas_min") or [], start=1):
             hechos = self.repo.tickers_con_dato(estado.fecha_date)
             faltan = [alias.get(t, t) for t in universo if t not in hechos and alias.get(t) not in hechos]
-            if not sigue or not faltan:
+            if not completo or not faltan:
                 break
             logger.info("Repesca %d: %d tickers sin dato", ronda, len(faltan))
             if not self._esperar(estado, float(pausa)):
+                completo = False
                 break
-            sigue = self._ronda(estado, faltan, ronda)
-        estado.terminada = True
+            completo = self._ronda(estado, faltan, ronda)
+        estado.terminada = completo
         guardar_estado(self.dir_ej, estado)
         return estado
 
@@ -230,7 +253,7 @@ class Ejecutor:
 def recuento(estado: Estado, universo: list[str], alias: dict, hechos: set[str]) -> dict:
     """
     Tickers del universo con puntos en la fecha, pedidos sin ficha (tampoco en
-    la repesca) y no procesados porque se acabo la ventana.
+    la repesca) y no procesados (no se llegaron a pedir).
     """
     pedidos = set(estado.pedidos)
     con, sin = 0, 0

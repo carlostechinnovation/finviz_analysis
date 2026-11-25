@@ -1,8 +1,8 @@
 @echo off
 REM ============================================================
-REM  ejecutar.bat - Proceso semanal de solvencia (principal.py).
+REM  ejecutar.bat - Proceso de solvencia (principal.py): lanzamiento diario.
 REM  Reenvia los argumentos:
-REM      ejecutar.bat                  ejecucion completa con email
+REM      ejecutar.bat                  lanzamiento diario: empieza, reanuda o nada
 REM      ejecutar.bat --sin-email      todo menos el envio
 REM      ejecutar.bat --solo-email     rehace y envia el informe de la ultima fecha
 REM      ejecutar.bat --max-tickers 5  prueba con los 5 primeros tickers
@@ -12,7 +12,7 @@ setlocal
 set "DIR_PROYECTO=%~dp0"
 set PYTHONUNBUFFERED=1
 set PYTHONIOENCODING=utf-8
-echo  finviz_analysis - Solvencia semanal. Inicio: %DATE% %TIME%   Argumentos: %*
+echo  finviz_analysis - Solvencia. Inicio: %DATE% %TIME%   Argumentos: %*
 call "%DIR_PROYECTO%_python_env.bat"
 if errorlevel 1 (endlocal & exit /b 1)
 cd /d "%DIR_PROYECTO%"

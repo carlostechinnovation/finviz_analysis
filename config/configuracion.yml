@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-#  finviz_analysis - Proceso semanal de solvencia (backend)
+#  finviz_analysis - Proceso de solvencia (backend, ciclos semanales)
 #
 #  Este fichero SE VERSIONA y el repositorio es PUBLICO:
 #  aqui NUNCA va una credencial ni un correo personal.
@@ -44,12 +44,12 @@ lectura:
   repesca_pausas_min: [2, 4]
   espera_bloqueo_min: 16      # pausa tras un lote en el que r.jina.ai bloqueo un dominio (~15 min para sus usuarios anonimos)
 
-ventana:
-  # Sabado 00:01 (tarea programada) hasta domingo 23:59: no se empieza ningun lote a partir del limite
-  dia_limite: 7               # dia ISO de la semana (1 = lunes ... 7 = domingo)
-  hora_limite: "23:59"
-  duracion_max_horas: 48      # tope adicional si se lanza a mano otro dia
-  dias_reanudar: 2            # una ejecucion sin terminar de hace <= estos dias se reanuda con su misma fecha
+ciclo:
+  # Tarea diaria a las 23:00 (hora de Madrid). Cada lanzamiento mira la fecha mas reciente de la tabla:
+  # si tiene 'dias' dias o mas, empieza un ciclo nuevo; si no, y el log no dice que el ciclo termino,
+  # lo reanuda; si termino, no hace nada (diseno_informatico.md 6.1)
+  dias: 7
+  duracion_max_horas: 22      # tope por lanzamiento: no se empiezan lotes despues; el siguiente lanzamiento reanuda
 
 analisis:
   umbral_puntos: 16           # mismo umbral que la web (PUNTOS_MINIMOS_COMPRA): por debajo, "(poco)"

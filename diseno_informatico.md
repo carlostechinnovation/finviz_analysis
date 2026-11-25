@@ -73,7 +73,8 @@ modulos/
 ├── configuracion/               configuracion.yml + secretos.yml
 ├── universo/                    cartera de iShares IWV -> tickers del Russell 3000
 ├── lector/                      interfaz Lector, LectorPlaywright y Chromium dentro del entorno
-├── ejecucion/                   lotes, ventana, repesca, reanudacion y estado JSON
+├── ejecucion/                   decision diaria, lotes, tope del lanzamiento, repesca y estado JSON
+├── registro/                    traza del ciclo en el log (CICLO ..., TICKER ...), §6.3
 ├── bd/                          interfaz Repositorio (MariaDB y memoria)
 ├── analisis/                    diff_*, estadisticas, top/bottom y correlaciones
 ├── informe/                     adjunto HTML y cuerpo del email
@@ -172,17 +173,18 @@ La app solo mira el parámetro `f=` de la URL; el resto (`v`, `o`, `p`, `ft`) se
 
 ## 6. Proceso semanal de solvencia (backend)
 
-Es un proceso Python separado de la web. Cada semana abre la web con Chromium sin ventana (Playwright), en lotes de 100 tickers del Russell 3000, lee los puntos y el precio de cada empresa, los guarda en MariaDB y envía un email con el resumen y el detalle. El porqué de cada decisión está en [diseno_funcional.md §9](diseno_funcional.md#9-evolución-semanal-de-la-solvencia-de-todo-el-russell-3000).
+Es un proceso Python separado de la web. Se lanza todas las noches a las 23:00 (hora de Madrid) y cada lanzamiento decide si empieza el ciclo de la semana, reanuda uno cortado o no hace nada. Cada ciclo abre la web con Chromium sin ventana (Playwright), en lotes de 100 tickers del Russell 3000, lee los puntos y el precio de cada empresa, los guarda en MariaDB y, al terminar, envía un email con el resumen y el detalle. El porqué de cada decisión está en [diseno_funcional.md §9](diseno_funcional.md#9-evolución-semanal-de-la-solvencia-de-todo-el-russell-3000).
 
 ```
-Task Scheduler (sabado 00:01, SYSTEM)
+Task Scheduler (diaria 23:00, hora de Madrid, SYSTEM)
   -> planificacion/run_solvencia_auto.bat -> ejecutar.bat -> principal.py
        universo   (permanentes/russell3000_bruto.csv, cartera de iShares IWV)
        lotes de 100 -> Chromium sin ventana -> https://carlostechinnovation.github.io/finviz_analysis/?tickers=...
                          (la web hace sus peticiones a r.jina.ai como siempre; §1)
                       <- marcas data-* de la fila de puntos (§3 paso 0)
        MariaDB  finvizanalysis.solvencia  (fecha, ticker, puntos_solvencia, precio)
-       estado   C:\finvizanalysis\data\ejecuciones\<fecha>.json   (lotes y tiempos)
+       log      C:\finvizanalysis\volatiles\logs\finvizanalysis.log   (traza del ciclo: decide la reanudacion, §6.3)
+       estado   C:\finvizanalysis\data\ejecuciones\<fecha>.json   (lotes y tiempos, solo para el informe)
        informe  C:\finvizanalysis\data\informes\   (adjunto HTML + cuerpo del email)
        email    SMTP (bloque 'email' de secretos.yml, el de bolsa)
 ```
@@ -192,32 +194,51 @@ Stack, el mismo que bolsa salvo la parte web: Python 3.11 (entorno Conda `finviz
 ### 6.1. Flujo paso a paso (`principal.py`)
 
 1. **Configuración** (`modulos/configuracion`): `config/configuracion.yml` más el fichero de secretos (§10).
-2. **Carpetas y log**: crea las de `rutas` si faltan. El log va a la consola y a `C:\finvizanalysis\volatiles\logs\finvizanalysis.log`, que **se vacía al inicio de cada ejecución nueva** (modo `w`) para que no crezca de una semana a otra. Si el arranque va a reanudar una ejecución cortada (paso 5; lo decide `se_reanudara`, que aplica la misma regla que `iniciar_o_reanudar` sin escribir en el log), se sigue escribiendo detrás y queda el rastro completo de esa semana. Relanzar tras una ejecución terminada cuenta como ejecución nueva. `--comprobar` y `--solo-email` tienen su propio fichero (`finvizanalysis_comprobar.log`, `finvizanalysis_solo_email.log`), también vaciado al arrancar, para no borrar el del proceso. Se borran además los `finvizanalysis_AAAA-MM-DD.log` que dejaban las versiones anteriores.
+2. **Carpetas y log del lanzamiento**: crea las de `rutas` si faltan.
+   - Cada lanzamiento escribe primero en `C:\finvizanalysis\volatiles\logs\finvizanalysis_lanzamiento.log`, que se vacía en cada arranque. Ahí queda la decisión del paso 4 con su motivo, o el error si algo falla antes de decidir (base de datos, secretos).
+   - El log del ciclo, `finvizanalysis.log`, no se toca hasta conocer la decisión.
+   - `--comprobar` y `--solo-email` tienen su propio fichero (`finvizanalysis_comprobar.log`, `finvizanalysis_solo_email.log`), también vaciado al arrancar.
+   - Se borran además los `finvizanalysis_AAAA-MM-DD.log` que dejaban las versiones anteriores.
 3. **Tabla**: `CREATE SCHEMA/TABLE IF NOT EXISTS` (`sql/crear_solvencia.sql`, §7).
-4. **Universo** (`modulos/universo`): lee el CSV de iShares, filtra y normaliza (§9.1 del funcional). Prepara también los alias de repesca para las clases partidas (`BFB` → `BF-B`).
-5. **Fecha y límite** (`modulos/ejecucion`, `iniciar_o_reanudar`):
-   - Si hay una ejecución sin terminar de hace como mucho `ventana.dias_reanudar` días y su límite no ha pasado, se reanuda con su misma fecha. Si no, se abre una nueva con la fecha de hoy.
-   - El límite es el siguiente domingo a las 23:59 (`ventana.dia_limite`, `ventana.hora_limite`), sin pasar de inicio + `ventana.duracion_max_horas`. Ese tope evita que una ejecución lanzada a mano un miércoles se coma la semana.
-6. **Pasada principal** (`Ejecutor.ejecutar`): los tickers del universo sin dato en esa fecha, en lotes de `lectura.tamano_lote`. Por cada lote:
+4. **Decisión** (`modulos/ejecucion`, `decidir`). Con F = `MAX(fecha)` de la tabla:
+   - **Ciclo nuevo**, con la fecha de hoy, si la tabla está vacía o hoy − F ≥ `ciclo.dias` (7). El log del ciclo se vacía (modo `w`) y empieza con `CICLO INICIO fecha=<hoy>`. Si el ciclo F quedó sin terminar, se abandona, y así lo dice el motivo.
+   - **Nada que hacer** si entre las 10 últimas líneas del log del ciclo está `CICLO TERMINADO fecha=F`. Sale con 0 sin tocar ese log: si lo vaciara, perdería la marca y la noche siguiente no sabría que el ciclo terminó.
+   - **Reanudar el ciclo F** en cualquier otro caso: un error, un reinicio del servidor, el tope del paso 9 o un log que falta. El log sigue escribiéndose detrás (modo `a`) y la primera línea nueva es `CICLO REANUDADO fecha=F tras: <última línea anterior>`.
+
+   La comparación es ≥ 7 para que el ciclo caiga siempre la misma noche de la semana.
+5. **Universo** (`modulos/universo`): lee el CSV de iShares, filtra y normaliza (§9.1 del funcional). Prepara también los alias de repesca para las clases partidas (`BFB` → `BF-B`).
+6. **Estado y límite** (`preparar_estado`):
+   - Al reanudar, se reutiliza el JSON de estado del ciclo con sus lotes (si falta, se crea con la fecha F).
+   - El límite del lanzamiento es ahora + `ciclo.duracion_max_horas` (22 h). Un lanzamiento de las 23:00 no empieza lotes después de las 21:00 del día siguiente, así que nunca se solapa con el de esa noche.
+7. **Pasada principal** (`Ejecutor.ejecutar`): los tickers del universo sin dato en la fecha del ciclo y que el log no da ya como pedidos en su pasada principal (`registro.tickers_pedidos`, §6.3), en lotes de `lectura.tamano_lote`. Los ya pedidos sin dato (sin ficha, lote fallido) no se repiten aquí, sino en la repesca. Por cada lote:
    1. Espera máxima `min(timeout_max_min, max(timeout_min, timeout_factor · (4·N + 1) / 18))`, recortada a lo que quede hasta el límite.
    2. `Lector.leer(url, espera)`: abre `?tickers=<lote>` y espera a `data-comparacion="terminada"`. Si no termina a tiempo, lee igualmente las casillas.
    3. Guarda las válidas en la base de datos (§6.2) con `INSERT … ON DUPLICATE KEY UPDATE`.
-   4. Anota el lote en el JSON de estado: inicio, fin, pedidos, guardados, si terminó, si hubo bloqueo y el error si lo hubo. Lo escribe a un `.tmp` y lo renombra, para que una caída no lo deje a medias.
-   5. Si hubo bloqueo del proxy, espera `lectura.espera_bloqueo_min`.
-   6. Una excepción en un lote (página caída, Chromium) se anota y no para la ejecución: sus tickers pasan a la repesca.
-7. **Repesca**: tras cada pausa de `lectura.repesca_pausas_min` (2 y 4 min), una ronda solo con los tickers que siguen sin dato. Las clases partidas se piden con guion.
-8. **Fin de ventana**: a partir del límite no se empieza ningún lote. El estado se marca como terminado y se sigue con el informe.
-9. **Informe y email** (§8): lee toda la tabla, calcula el detalle, las estadísticas y las correlaciones (`modulos/analisis`), escribe el adjunto y el cuerpo en `rutas.dir_informes` y envía el email.
-10. **Código de salida**: 0 si todo fue bien. Si falla algo fuera de los lotes (base de datos, secretos, universo), escribe el traceback en el log, intenta mandar un email de error y sale con 1.
+   4. Escribe en el log una línea `TICKER` por cada ticker del lote, con su resultado (§6.3).
+   5. Anota el lote en el JSON de estado: inicio, fin, pedidos, guardados, si terminó, si hubo bloqueo y el error si lo hubo. Lo escribe a un `.tmp` y lo renombra, para que una caída no lo deje a medias.
+   6. Si hubo bloqueo del proxy, espera `lectura.espera_bloqueo_min`.
+   7. Una excepción en un lote (página caída, Chromium) se anota (`ERROR_LOTE`) y no para la ejecución: sus tickers pasan a la repesca.
+8. **Repesca**: tras cada pausa de `lectura.repesca_pausas_min` (2 y 4 min), una ronda solo con los tickers que siguen sin dato. Las clases partidas se piden con guion. Si el corte fue durante la repesca, al reanudar se repiten sus rondas, que son cortas.
+9. **Tope del lanzamiento**: a partir del límite no se empieza ningún lote. Se escribe `CICLO PARADO fecha=F …` y se sale con 0, sin informe ni email: el siguiente lanzamiento reanuda.
+10. **Informe y email** (§8), solo al completar el ciclo:
+    - lee toda la tabla y calcula el detalle, las estadísticas y las correlaciones (`modulos/analisis`);
+    - escribe el adjunto y el cuerpo en `rutas.dir_informes` y envía el email;
+    - escribe la última línea, `CICLO TERMINADO fecha=F email=<resultado>`.
+
+    Con `--max-tickers` esa marca no se escribe, porque es una prueba: el siguiente lanzamiento completa el resto del universo con la misma fecha.
+11. **Errores y código de salida**:
+    - Un error dentro del ciclo deja el traceback en su log, intenta mandar un email de error y termina el log con `CICLO CON ERROR fecha=F`. La noche siguiente se reanuda (como el envío del email forma parte del ciclo, un fallo de SMTP también se reintenta).
+    - Un error antes de decidir queda en el log del lanzamiento.
+    - Sale con 0 si todo fue bien, incluido "nada que hacer" y el tope del paso 9; con 1 si hubo un error.
 
 Opciones de `principal.py`, que `ejecutar.bat` reenvía:
 
 | Opción | Qué hace |
 |---|---|
-| *(ninguna)* | Ejecución completa con email |
-| `--sin-email` | Todo menos el envío (el informe queda en `rutas.dir_informes`) |
+| *(ninguna)* | Lanzamiento diario: empieza un ciclo, lo reanuda o no hace nada; email al terminar el ciclo |
+| `--sin-email` | Lo mismo sin el envío (el informe queda en `rutas.dir_informes`) |
 | `--solo-email` | Rehace el informe de la última fecha de la tabla con su JSON de estado y lo envía, sin descargar nada |
-| `--max-tickers N` | Solo los N primeros tickers del universo (pruebas) |
+| `--max-tickers N` | Solo los N primeros tickers del universo (pruebas). No da el ciclo por terminado |
 | `--comprobar` | Abre la web con AAPL y MSFT y dice si se leen puntos y precio. No toca la base de datos ni el email, y no necesita el fichero de secretos |
 | `--url URL` | Usa otra web en vez de `web.url`, por ejemplo `http://localhost:8000/` para probar cambios de `docs/` antes de publicarlos |
 | `--config RUTA` | Usa otro `configuracion.yml` (pruebas con otro schema u otras carpetas) |
@@ -229,13 +250,41 @@ Opciones de `principal.py`, que `ejecutar.bat` reenvía:
 - **Qué se guarda.** Solo las casillas *válidas*: con ficha, con puntos numéricos y con la dilución distinta de `pendiente`. Así, con una página que no terminó a tiempo, nunca se guardan unos puntos a los que todavía podría restarse el −99.
 - **Dónde está Chromium.** Dentro del entorno Conda (`PLAYWRIGHT_BROWSERS_PATH=0`, `modulos/lector/navegador.py`), igual que en bolsa. La tarea programada corre como SYSTEM, que no vería un Chromium instalado en el perfil de otro usuario.
 
+### 6.3. Traza del ciclo en el log (`modulos/registro`)
+
+El log del ciclo, `finvizanalysis.log`, es junto con la tabla lo que decide cada lanzamiento (§6.1 paso 4). Por eso lleva líneas con un formato fijo, que `modulos/registro` escribe y lee:
+
+| Línea | Cuándo |
+|---|---|
+| `CICLO INICIO fecha=AAAA-MM-DD` | Primera línea de un ciclo nuevo (el log se acaba de vaciar) |
+| `CICLO REANUDADO fecha=AAAA-MM-DD tras: <línea>` | Primera línea de cada reanudación, con la última línea que había |
+| `TICKER <t> ronda=<n> <RESULTADO> [detalle]` | Una por ticker pedido, al acabar su lote |
+| `CICLO PARADO fecha=AAAA-MM-DD: …` | Se alcanzó el tope del lanzamiento |
+| `CICLO CON ERROR fecha=AAAA-MM-DD: …` | Tras el traceback de un error dentro del ciclo |
+| `CICLO TERMINADO fecha=AAAA-MM-DD email=<resultado>` | Última línea de un ciclo completo |
+
+`RESULTADO` puede ser:
+
+- `GUARDADO puntos=… precio=…`: se escribe después de guardar, así que el ticker ya está en la tabla;
+- `SIN_FICHA motivo=…` (el `data-motivo` de la web);
+- `NO_GUARDADO dilucion=… puntos=…`: con ficha, pero sin puntos o con la dilución pendiente;
+- `NO_LEIDO`: la página no devolvió la casilla;
+- `ERROR_LOTE`: el lote entero falló.
+
+Al reanudar, el punto de partida es:
+
+- los tickers con fila en la fecha del ciclo (la tabla);
+- más los que tienen línea `TICKER … ronda=0` dentro de ese ciclo, desde su `CICLO INICIO` o `CICLO REANUDADO`. Las líneas de otro ciclo no cuentan.
+
+La pasada principal sigue con el resto, en el orden del CSV. El JSON de estado (`rutas.dir_ejecuciones`) ya no decide nada: solo guarda las estadísticas del informe (duración de los lotes, bloqueos, errores y tickers pedidos).
+
 ## 7. Base de datos
 
 Schema `finvizanalysis` (`bd.database`; el `mariadb.database` del fichero de secretos se ignora), tabla `solvencia` (`bd.tabla`):
 
 | Columna | Tipo | Contenido |
 |---|---|---|
-| `fecha` | DATE, PK | Inicio de la ejecución semanal |
+| `fecha` | DATE, PK | Inicio del ciclo semanal (su primer lanzamiento) |
 | `ticker` | VARCHAR(16), PK | Ticker como lo pide la web (con guion en las clases: `BRK-B`, `BF-B`) |
 | `puntos_solvencia` | DECIMAL(7,2) | Puntos de la web con el screener `solventes`, incluido el −99 por dilución |
 | `precio` | DECIMAL(14,4), NULL | Campo `Price` de la ficha de Finviz en la misma lectura |
@@ -271,7 +320,7 @@ ejecutar.bat --comprobar
 :: Prueba corta sin email
 ejecutar.bat --max-tickers 5 --sin-email
 
-:: Ejecución completa
+:: Lanzamiento como el de la tarea diaria (empieza, reanuda o no hace nada)
 ejecutar.bat
 ```
 
@@ -296,7 +345,8 @@ Los tests de pytest cubren:
 
 - el universo;
 - la interpretación de las marcas;
-- los lotes, la ventana, la repesca, los bloqueos y la reanudación, con reloj y lector falsos;
+- la decisión diaria, los lotes, el tope del lanzamiento, la repesca, los bloqueos y la reanudación, con reloj y lector falsos;
+- la traza del log (`test_registro.py`) y el lanzamiento de principio a fin (`test_lanzamiento.py`): ciclo nuevo, nada que hacer, reanudación tras un corte y error;
 - los `diff_*`, la tolerancia, el top y el bottom, Spearman y Benjamini-Hochberg;
 - los formatos y colores del informe;
 - la configuración y el email;
@@ -310,7 +360,7 @@ Los tests de pytest cubren:
 - **`bd`**: schema y tabla.
 - **`web.url`**: la web publicada.
 - **`lectura`**: tamaño de lote, esperas, cupo del proxy, repesca y bloqueo.
-- **`ventana`**: día y hora límite, duración máxima y días de reanudación.
+- **`ciclo`**: días del ciclo (7) y tope de horas por lanzamiento (22).
 - **`analisis`**: umbral 16, máximo 26,31, saturación de los `diff_*`, tolerancia, top N y parámetros de la correlación.
 - **`email`**: activación, título y subtítulo.
 
@@ -330,16 +380,19 @@ En ishares.com, en la página del ETF **iShares Russell 3000 (IWV)**, descargar 
 
 ## 11. Planificación
 
-Una tarea semanal, el sábado a las 00:01, como SYSTEM. Se crea en PowerShell o CMD **como administrador** (está también en `planificacion/windows_planificacion.txt`):
+Una tarea diaria a las 23:00, hora local del servidor (Madrid), como SYSTEM. Se crea en PowerShell o CMD **como administrador**. Los comandos están también en `planificacion/windows_planificacion.txt`:
 
 ```powershell
-schtasks /create /tn "FinvizAnalysis_Solvencia_Semanal" /tr "C:\DATOS\GITHUB\finviz_analysis\planificacion\run_solvencia_auto.bat" /sc weekly /d SAT /st 00:01 /ru SYSTEM /rl HIGHEST /f
+schtasks /delete /tn "FinvizAnalysis_Solvencia_Semanal" /f
+schtasks /create /tn "FinvizAnalysis_Solvencia_Diaria" /tr "C:\DATOS\GITHUB\finviz_analysis\planificacion\run_solvencia_auto.bat" /sc daily /st 23:00 /ru SYSTEM /rl HIGHEST /f
 ```
 
-- El propio proceso deja de empezar lotes el domingo a las 23:59 y envía el email al acabar. Con el universo actual suele terminar el sábado (5–10 h, diseno_funcional §9.3).
-- Windows para por defecto las tareas que pasan de 72 h, así que queda margen sobre las 48 h de la ventana.
+- **Antes de crear la tarea diaria, el servidor debe tener este código.** El código anterior, lanzado a diario, haría un recorrido completo del Russell 3000 cada noche.
+- **El día de la semana del ciclo lo fija el primer ciclo.** Para medir el cierre del viernes, el primer lanzamiento con la tabla vacía debe ser un viernes (diseno_funcional §9.3).
+- **Sin solapes.** Un lanzamiento no empieza lotes pasadas 22 h (`ciclo.duracion_max_horas`). Si aun así siguiera en marcha a las 23:00, Task Scheduler no arranca una segunda copia: es su opción por defecto, "no iniciar una instancia nueva". El límite de 72 h que Windows aplica por defecto a las tareas queda muy lejos.
+- **Tras un reinicio del servidor** no hay que hacer nada: el lanzamiento de esa noche reanuda el ciclo.
 - `run_solvencia_auto.bat` llama a `ejecutar.bat` con `< nul`, para que nada espere una tecla.
-- Para consultar, lanzar a mano, deshabilitar o borrar la tarea: `schtasks /query | /run | /change /disable | /delete /tn "FinvizAnalysis_Solvencia_Semanal"`.
+- Para consultar, lanzar a mano, deshabilitar o borrar la tarea: `schtasks /query | /run | /change /disable | /delete /tn "FinvizAnalysis_Solvencia_Diaria"`.
 
 ## 12. Seguridad: repositorio público
 
