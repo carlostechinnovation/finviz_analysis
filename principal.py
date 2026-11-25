@@ -16,6 +16,7 @@ import argparse
 from html import escape
 import datetime as dt
 import logging
+import re
 import sys
 import traceback
 
@@ -23,7 +24,8 @@ from modulos.analisis import logica as analisis
 from modulos.bd.logica import crear_repositorio
 from modulos.configuracion.logica import cargar_configuracion, crear_directorios
 from modulos.email.logica import enviar
-from modulos.ejecucion.logica import Ejecutor, iniciar_o_reanudar, leer_estado, guardar_estado, recuento
+from modulos.ejecucion.logica import (Ejecutor, iniciar_o_reanudar, leer_estado, guardar_estado, recuento,
+                                      se_reanudara)
 from modulos.espacio.logica import tamano_directorio
 from modulos.informe import logica as informe
 from modulos.lector.logica import crear_lector, timeout_lote_min, url_lote
@@ -33,11 +35,26 @@ logger = logging.getLogger("finvizanalysis")
 TICKERS_COMPROBACION = ["AAPL", "MSFT"]
 
 
-def configurar_log(config, fecha: str) -> None:
+PREFIJO_LOG = "finvizanalysis"
+# Logs de versiones anteriores, uno por fecha: finvizanalysis_AAAA-MM-DD.log
+_LOG_CON_FECHA = re.compile(rf"^{PREFIJO_LOG}_\d{{4}}-\d{{2}}-\d{{2}}\.log$")
+
+
+def configurar_log(config, nombre: str = PREFIJO_LOG, vaciar: bool = True) -> None:
+    """
+    Log a consola y a <dir_logs>/<nombre>.log. Con vaciar=True el fichero se
+    vacia al arrancar (modo 'w'); al reanudar una ejecucion cortada se llama
+    con vaciar=False y se sigue escribiendo detras. Borra tambien los logs con
+    fecha que dejaban las versiones anteriores.
+    """
     manejadores = [logging.StreamHandler(sys.stdout)]
     try:
-        ruta = config.ruta("dir_logs") / f"finvizanalysis_{fecha}.log"
-        manejadores.append(logging.FileHandler(ruta, encoding="utf-8"))
+        dir_logs = config.ruta("dir_logs")
+        for viejo in dir_logs.iterdir():
+            if _LOG_CON_FECHA.match(viejo.name):
+                viejo.unlink(missing_ok=True)
+        manejadores.append(logging.FileHandler(dir_logs / f"{nombre}.log", mode="w" if vaciar else "a",
+                                               encoding="utf-8"))
     except Exception:
         pass
     logging.basicConfig(level=logging.INFO, handlers=manejadores, force=True,
@@ -126,14 +143,17 @@ def main(argv=None) -> int:
         config = cargar_configuracion(a.config, con_secretos=False)
         if a.url:
             config.datos.setdefault("web", {})["url"] = a.url
-        configurar_log(config, "comprobar")
+        configurar_log(config, f"{PREFIJO_LOG}_comprobar")
         return comprobar(config)
 
     config = cargar_configuracion(a.config)
     if a.url:
         config.datos.setdefault("web", {})["url"] = a.url
     crear_directorios(config)
-    configurar_log(config, ahora.date().isoformat())
+    if a.solo_email:
+        configurar_log(config, f"{PREFIJO_LOG}_solo_email")
+    else:
+        configurar_log(config, vaciar=not se_reanudara(config, ahora))
     try:
         repo = crear_repositorio(config)
         repo.asegurar_tabla()

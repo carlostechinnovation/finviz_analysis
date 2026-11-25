@@ -3,7 +3,7 @@ import datetime as dt
 from apoyo import LectorFalso, Reloj, config_prueba
 from modulos.bd.logica import RepositorioMemoria
 from modulos.ejecucion.logica import (Ejecutor, Estado, calcular_limite, guardar_estado, iniciar_o_reanudar,
-                                      leer_estado, recuento)
+                                      leer_estado, recuento, se_reanudara)
 
 SABADO = dt.datetime(2026, 11, 28, 0, 1)
 FECHA = dt.date(2026, 11, 28)
@@ -80,3 +80,12 @@ def test_no_reanuda_pasado_el_limite(tmp_path):
     guardar_estado(config.ruta("dir_ejecuciones"),
                    Estado("2026-11-29", "2026-11-29T00:01:00", "2026-11-29T23:59:00"))
     assert iniciar_o_reanudar(config, dt.datetime(2026, 11, 30, 8, 0)).fecha == "2026-11-30"
+
+
+def test_se_reanudara_coincide_con_iniciar_o_reanudar(tmp_path):
+    config = config_prueba(tmp_path)
+    assert not se_reanudara(config, SABADO)                       # nada guardado: nueva
+    guardar_estado(config.ruta("dir_ejecuciones"),
+                   Estado("2026-11-29", "2026-11-29T00:01:00", "2026-11-29T23:59:00"))
+    assert se_reanudara(config, dt.datetime(2026, 11, 29, 20, 0))    # sin terminar y en plazo
+    assert not se_reanudara(config, dt.datetime(2026, 11, 30, 8, 0))  # limite pasado: nueva

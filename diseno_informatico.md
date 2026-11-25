@@ -192,7 +192,7 @@ Stack, el mismo que bolsa salvo la parte web: Python 3.11 (entorno Conda `finviz
 ### 6.1. Flujo paso a paso (`principal.py`)
 
 1. **Configuración** (`modulos/configuracion`): `config/configuracion.yml` más el fichero de secretos (§10).
-2. **Carpetas y log**: crea las de `rutas` si faltan. El log va a `C:\finvizanalysis\volatiles\logs\finvizanalysis_<fecha>.log` y a la consola.
+2. **Carpetas y log**: crea las de `rutas` si faltan. El log va a la consola y a `C:\finvizanalysis\volatiles\logs\finvizanalysis.log`, que **se vacía al inicio de cada ejecución nueva** (modo `w`) para que no crezca de una semana a otra. Si el arranque va a reanudar una ejecución cortada (paso 5; lo decide `se_reanudara`, que aplica la misma regla que `iniciar_o_reanudar` sin escribir en el log), se sigue escribiendo detrás y queda el rastro completo de esa semana. Relanzar tras una ejecución terminada cuenta como ejecución nueva. `--comprobar` y `--solo-email` tienen su propio fichero (`finvizanalysis_comprobar.log`, `finvizanalysis_solo_email.log`), también vaciado al arrancar, para no borrar el del proceso. Se borran además los `finvizanalysis_AAAA-MM-DD.log` que dejaban las versiones anteriores.
 3. **Tabla**: `CREATE SCHEMA/TABLE IF NOT EXISTS` (`sql/crear_solvencia.sql`, §7).
 4. **Universo** (`modulos/universo`): lee el CSV de iShares, filtra y normaliza (§9.1 del funcional). Prepara también los alias de repesca para las clases partidas (`BFB` → `BF-B`).
 5. **Fecha y límite** (`modulos/ejecucion`, `iniciar_o_reanudar`):

@@ -109,19 +109,32 @@ def calcular_limite(inicio: dt.datetime, dia_limite: int, hora_limite: str, max_
     return min(candidato, inicio + dt.timedelta(hours=float(max_horas)))
 
 
-def iniciar_o_reanudar(config, ahora: dt.datetime) -> Estado:
-    """Estado de la ejecucion: reanuda la mas reciente sin terminar si es reciente; si no, una nueva."""
+def buscar_sin_terminar(config, ahora: dt.datetime) -> Estado | None:
+    """La ejecucion sin terminar mas reciente de los ultimos ventana.dias_reanudar dias (con o sin limite pasado)."""
     dir_ej = config.ruta("dir_ejecuciones")
     dias = int(config.get("ventana.dias_reanudar", 2))
     for atras in range(0, dias + 1):
-        fecha = (ahora.date() - dt.timedelta(days=atras)).isoformat()
-        previo = leer_estado(dir_ej, fecha)
+        previo = leer_estado(dir_ej, (ahora.date() - dt.timedelta(days=atras)).isoformat())
         if previo and not previo.terminada:
-            if ahora < previo.limite_dt:
-                logger.info("Se reanuda la ejecucion del %s (limite %s)", fecha, previo.limite)
-                return previo
-            logger.info("La ejecucion sin terminar del %s ya paso su limite: no se reanuda", fecha)
-            break
+            return previo
+    return None
+
+
+def se_reanudara(config, ahora: dt.datetime) -> bool:
+    """Lo que decidira iniciar_o_reanudar, sin escribir en el log (se usa antes de abrirlo)."""
+    previo = buscar_sin_terminar(config, ahora)
+    return previo is not None and ahora < previo.limite_dt
+
+
+def iniciar_o_reanudar(config, ahora: dt.datetime) -> Estado:
+    """Estado de la ejecucion: reanuda la mas reciente sin terminar si es reciente; si no, una nueva."""
+    dir_ej = config.ruta("dir_ejecuciones")
+    previo = buscar_sin_terminar(config, ahora)
+    if previo:
+        if ahora < previo.limite_dt:
+            logger.info("Se reanuda la ejecucion del %s (limite %s)", previo.fecha, previo.limite)
+            return previo
+        logger.info("La ejecucion sin terminar del %s ya paso su limite: no se reanuda", previo.fecha)
     fecha = ahora.date().isoformat()
     previo = leer_estado(dir_ej, fecha)
     limite = calcular_limite(ahora, config.get("ventana.dia_limite", 7), config.get("ventana.hora_limite", "23:59"),
