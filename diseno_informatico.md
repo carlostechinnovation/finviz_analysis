@@ -311,6 +311,9 @@ Schema `finvizanalysis` (`bd.database`; el `mariadb.database` del fichero de sec
 ## 9. Entorno, instalación y tests del proceso semanal
 
 ```bat
+:: Una vez por equipo: copiar el universo, que git no trae (§10.2). Si el equipo no tiene bolsa, descargarlo de iShares
+copy C:\DATOS\GITHUB\bolsa\permanentes\russell3000_bruto.csv C:\DATOS\GITHUB\finviz_analysis\permanentes\
+
 :: Una vez por equipo (y tras cambiar entorno.yml), con el Python 'base' de Conda:
 python actualizar_entorno.py
 
@@ -376,7 +379,7 @@ Las credenciales quedan en claves internas (`_bd`, `_email`) que nunca se escrib
 
 ### 10.2. Universo
 
-En ishares.com, en la página del ETF **iShares Russell 3000 (IWV)**, descargar "Detailed Holdings and Analytics" (CSV) y guardarlo, tal cual, como `permanentes\russell3000_bruto.csv`. Es el mismo fichero que bolsa (`bolsa\permanentes\russell3000_bruto.csv`). No se versiona (`.gitignore`): es contenido de BlackRock y el repositorio es público. Conviene renovarlo cada trimestre, tras la reconstitución del índice.
+En ishares.com, en la página del ETF **iShares Russell 3000 (IWV)**, descargar "Detailed Holdings and Analytics" (CSV) y guardarlo, tal cual, como `permanentes\russell3000_bruto.csv`. Es el mismo fichero que bolsa (`bolsa\permanentes\russell3000_bruto.csv`). No se versiona (`.gitignore`): es contenido de BlackRock y el repositorio es público. Por eso `git pull` no lo trae y hay que copiarlo a mano en cada equipo nuevo (§9). Sin él, el lanzamiento falla antes de abrir la web, con `FileNotFoundError` y email de error, y no escribe nada en la tabla. Conviene renovarlo cada trimestre, tras la reconstitución del índice.
 
 ## 11. Planificación
 
